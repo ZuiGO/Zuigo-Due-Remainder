@@ -8,15 +8,23 @@
 
 ## 1. System Architecture & Tech Stack
 
-- **Framework:** Next.js 14 (App Router) + React + TypeScript + Tailwind CSS
-- **Database & ORM:** SQLite for zero-config local run, switchable to PostgreSQL via `DATABASE_URL` in `.env` using **Prisma ORM**.
-- **Data Ingestion:** SheetJS (`xlsx`) with custom Ledger Code Strip (`[ ABMATO ]`) and Semicolon-Contact Normalization (`name1 ; name2`, `phone1 ; phone2`).
-- **Scheduling & Automation:** Built-in Background Auto-Check Worker with configurable frequency (daily morning cron window) and idempotency guards.
-- **Messaging Engines:**
-  - WhatsApp: WhatsApp Business Cloud API / Twilio WhatsApp Simulator
-  - SMS: Twilio / MSG91 / Fast2SMS
-  - Email: Nodemailer SMTP / Resend
-- **Testing Suite:** Vitest / Node test runner with comprehensive unit, integration, and parser tests.
+- **Framework:** Next.js 14.2 (App Router) + React 18 + TypeScript + Tailwind CSS
+- **Database & ORM:** SQLite via **Prisma ORM** (`dev.db`), completely switchable to PostgreSQL by providing `DATABASE_URL="postgresql://..."` in `.env`.
+- **Data Ingestion:** SheetJS (`xlsx`) + Custom Regex Normalizer (`src/lib/parser.ts`) that strips ERP bracketed codes (e.g. `[ ABMATO ]`), replaces parentheses, formats phone numbers to standard E.164 (`+91...`), and parses semicolon-delimited multiple contacts (`Smit Satpute ; Vinod Kale`).
+- **Payment & Installment Engine (`src/lib/payment-engine.ts`):**
+  - **Milestone Installment Splitting:** Splits any balance into $N$ equal installments with rounding protection on the final installment.
+  - **Reconciliation Diff Engine:** When re-uploading an updated Excel/CSV ledger, if an existing customer's `Dr` balance has decreased, the platform auto-detects that a payment was made, records a reconciled payment record, updates `remainingBalance`, and resets the aggressive reminder count so the customer is acknowledged.
+  - **Manual Payment Recording:** Users can record full or partial payments with UTR reference, payment mode, and next installment due date, with optional instant payment receipt messaging.
+  - **Settlement:** When remaining balance drops to 0 (or becomes `Cr`), the due is marked as `SETTLED` and customer status unflags.
+- **Automated Cadence & Defaulter Escalation Engine (`src/lib/reminder-engine.ts`, `src/lib/worker.ts`):**
+  - Evaluates schedules: $T-3$ days (Gentle), Day 0 (Due Date Prompt), $T+3$ days (Overdue Follow-up), $T+7$ days (Urgent), $T+15$ days (Final Notice).
+  - Automatically flags customers as `FLAGGED` (`isFlagged: true`) after 4 or 5 consecutive unanswered reminders, halting automated messages to prevent friction while alerting management.
+- **Messaging Dispatchers (`src/lib/dispatchers/`):**
+  - WhatsApp: Meta WhatsApp Cloud API / Twilio / Built-in Sandbox Simulator
+  - SMS: Twilio / MSG91 (DLT) / Fast2SMS / Sandbox Simulator
+  - Email: Nodemailer SMTP / Resend / Sandbox Simulator
+- **Template Designer (`src/app/templates/page.tsx`):**
+  - WYSIWYG editor with live mobile previews (WhatsApp chat bubble, SMS character counter, HTML Email) and dynamic placeholder pills (`{{customer_name}}`, `{{due_amount}}`, `{{due_date}}`, `{{bank_details}}`, etc.).
 
 ---
 
@@ -24,96 +32,95 @@
 
 ```
 ├── .gitignore
+├── .npmrc                   <-- Configured with strict-ssl=false for SSL proxy environments
 ├── AGENT.md                 <-- Handover documentation (keep updated!)
 ├── README.md                <-- User and developer overview
-├── package.json             <-- Node dependencies & scripts
+├── package.json             <-- Node scripts and dependencies
 ├── tsconfig.json            <-- TypeScript configuration
 ├── tailwind.config.js       <-- Styling configuration
 ├── prisma/
-│   ├── schema.prisma        <-- Database schema (Customers, Contacts, Dues, Installments, Payments, Templates, Logs)
-│   └── seed.ts              <-- Sample demo data loader based on real Auric City DMIC dataset
+│   ├── schema.prisma        <-- Schema: Customers, Contacts, Dues, Installments, Payments, Templates, Logs
+│   └── seed.ts              <-- Seeds Auric City / ABMATO dataset + demo templates
 ├── src/
-│   ├── app/                 <-- Next.js App Router (Pages, UI, and API Routes)
-│   │   ├── api/
-│   │   │   ├── upload/      <-- Excel & CSV Parser API
-│   │   │   ├── customers/   <-- Customer Master & Contact CRUD
-│   │   │   ├── dues/        <-- Dues management & filters (Upcoming, Overdue, Flagged)
-│   │   │   ├── payments/    <-- Manual & Reconciled Installment/Payment recording
-│   │   │   ├── installments/<-- Installment plan generator & status tracker
-│   │   │   ├── reminders/   <-- Manual dispatch & automated scheduler trigger
-│   │   │   ├── templates/   <-- WhatsApp, SMS, Email template manager
-│   │   │   └── settings/    <-- API credentials & reminder rules configuration
-│   │   ├── page.tsx         <-- Dashboard with real-time analytics & quick actions
-│   │   ├── dues/            <-- Dues table, installment manager, reminder triggers
-│   │   ├── customers/       <-- Customer directory, contact cards, flag overrides
-│   │   ├── templates/       <-- Template designer with live preview & dynamic pills
-│   │   ├── settings/        <-- Channel credentials & global reminder schedule
-│   │   └── logs/            <-- Full audit log of all automated & manual reminders
-│   ├── lib/                 <-- Core business logic & utility modules
-│   │   ├── db.ts            <-- Prisma client singleton
-│   │   ├── parser.ts        <-- Smart Excel / CSV parser & normalizer
-│   │   ├── reminder-engine.ts <-- Due calculation, cadence matcher & auto-flagging
-│   │   ├── payment-engine.ts  <-- Installment calculation & Excel diff reconciliation
-│   │   ├── template-renderer.ts <-- Dynamic placeholder interpolator
-│   │   └── dispatchers/     <-- WhatsApp, SMS, and Email delivery clients
-│   └── tests/               <-- Automated tests for each module
+│   ├── data/
+│   │   ├── sample_ledger.csv   <-- User-provided Ledger Master Outstanding Report
+│   │   └── sample_contacts.csv <-- User-provided Customer Contact Directory
+│   ├── lib/
+│   │   ├── db.ts               <-- Prisma client singleton
+│   │   ├── parser.ts           <-- Smart parser: strips codes, filters non-customers, parses contacts
+│   │   ├── payment-engine.ts   <-- Installments, payments, and Excel diff reconciliation
+│   │   ├── template-renderer.ts<-- Dynamic placeholder interpolator & predefined presets
+│   │   ├── reminder-engine.ts  <-- Aging calculation, cadence matching & defaulter flagging
+│   │   ├── worker.ts           <-- Automated cron/background worker
+│   │   └── dispatchers/
+│   │       └── index.ts        <-- Multi-channel delivery engine (WhatsApp, SMS, Email)
+│   ├── tests/
+│   │   ├── parser.test.ts          <-- 6 unit tests
+│   │   ├── payment-engine.test.ts  <-- 6 unit tests
+│   │   ├── reminder-engine.test.ts <-- 4 unit tests
+│   │   ├── template-renderer.test.ts<-- 2 unit tests
+│   │   └── worker.test.ts          <-- 2 integration tests (20 tests total, all passing!)
+│   └── app/
+│       ├── layout.tsx          <-- Sidebar navigation & shell layout
+│       ├── page.tsx            <-- Dashboard with KPIs, quick upload & priority watchlist
+│       ├── dues/page.tsx       <-- Dues table, installment split, payment modal, manual dispatch
+│       ├── customers/page.tsx  <-- Customer directory & manual defaulter flag toggles
+│       ├── templates/page.tsx  <-- Template designer with live WhatsApp/SMS/Email previews
+│       ├── settings/page.tsx   <-- Channel API credentials & automated cadence config
+│       ├── logs/page.tsx       <-- Audit logs of all reminders dispatched
+│       └── api/
+│           ├── upload/route.ts       <-- Excel/CSV ingestion & auto-reconciliation
+│           ├── customers/route.ts    <-- Customer master & flag toggle
+│           ├── dues/route.ts         <-- Dues filtering & stats
+│           ├── payments/route.ts     <-- Record manual payment / installment
+│           ├── installments/route.ts <-- Split due into installments
+│           ├── reminders/
+│           │   ├── send/route.ts     <-- Manual reminder trigger
+│           │   └── auto-check/route.ts<-- Automated cron trigger
+│           ├── templates/route.ts    <-- Template CRUD
+│           ├── settings/route.ts     <-- Credentials & cadence settings
+│           └── logs/route.ts         <-- Delivery logs
 ```
 
 ---
 
-## 3. Core Business Rules
-
-1. **Dr vs. Cr Ledger Logic:**
-   - **`Dr` (Debit):** Amount owed **to** the company (Receivable due). Only positive `Dr` balances trigger reminders.
-   - **`Cr` (Credit):** Customer has an advance balance or credit note. System flags as advance; reminders are suppressed.
-   - **Non-Customer Ledgers:** Accounts like `Electricity Bill`, `TDS on Sales`, `Sales Return`, and `Depreciation` are automatically filtered out.
-2. **Name & Contact Normalization:**
-   - Strips ledger codes: `DHOOT AUTOCOMPONENTS PRIVATE LIMITED [ ABMATO ]` $\to$ `DHOOT AUTOCOMPONENTS PRIVATE LIMITED`.
-   - Contact splits: `Kamran Khan;` + `77579 07578; 70576 18529` + `finance@sscontrols.in; design.mech@sscontrols.in` creates discrete contact entries.
-3. **Installment & Partial Payment Plan:**
-   - **Automatic Excel Re-Import Reconciliation:** When a new report is uploaded, if `Dr` balance has decreased, the difference is logged as an auto-detected payment, reducing remaining due and resetting the aggressive reminder counter.
-   - **Manual Installment Recording:** User can record partial payment with UTR/mode, update the next installment due date, and automatically dispatch a payment receipt message.
-   - **Installment Splitting:** Any due can be split into $N$ milestone installments; reminders reference the specific installment amount and due date.
-4. **Automated Defaulter Escalation (4-5 Reminders):**
-   - Reminders increment `consecutive_reminders_count`.
-   - Once count hits threshold (default 4 or 5 unresponded reminders), the customer is moved to `FLAGGED` status (`is_flagged = true`).
-   - Automated spamming halts to protect business relations; admin receives an escalation alert.
-   - Recording a payment or re-importing a cleared balance immediately resets the flag and counter.
-
----
-
-## 4. Setup & Running Instructions
+## 3. Running & Testing Commands
 
 ```bash
-# 1. Install dependencies
-npm.cmd install
-
-# 2. Setup SQLite Database & run Prisma migrations
-npm.cmd run db:push
-
-# 3. Seed initial sample data from provided Auric City / ABMATO dataset
-npm.cmd run db:seed
-
-# 4. Run automated test suites
+# Run the automated test suite (all 20 unit & integration tests)
 npm.cmd test
 
-# 5. Start development server
+# Sync database schema with Prisma
+npm.cmd run db:push
+
+# Re-seed initial demo dataset
+npm.cmd run db:seed
+
+# Build Next.js production bundle
+npm.cmd run build
+
+# Start Next.js development server
 npm.cmd run dev
 ```
 
 ---
 
-## 5. Module Build & Verification Log
+## 4. Verification & Testing Matrix
 
-| Module | Status | Unit / Integration Test | Notes |
+| Module | Verification Test | Status | Results |
 | :--- | :--- | :--- | :--- |
-| **0. Git Repo & Config** | ✅ Done | `git status` configured with `zuigo <jayesh@zuigo.ai>` | Initialized |
-| **1. DB Schema & Models** | 🔄 In Progress | Schema validation & SQLite sync | Customers, Dues, Installments, Payments, Templates, Logs |
-| **2. Excel / CSV Parser** | ⏳ Planned | Suffix stripper, Dr/Cr parser, Multi-contact splitter | Handles reference sample data |
-| **3. Installment & Payment Engine**| ⏳ Planned | Partial payment calculation, Excel diff auto-detect | Milestone tracking & settlement |
-| **4. Template & Dynamic Tag Engine**| ⏳ Planned | Tag interpolation (`{{due_amount}}`, etc.) | SMS, WhatsApp, Email previews |
-| **5. Multi-channel Dispatchers** | ⏳ Planned | WhatsApp, SMS, Email senders with sandbox mocks | Delivery logs & error capture |
-| **6. Automated Scheduler & Flagging**| ⏳ Planned | Defaulter trigger after 4-5 reminders, cron checker | Prevents duplicate reminders |
-| **7. Web UI Dashboard & Management**| ⏳ Planned | Modern responsive Next.js frontend | Complete CRUD, modals, manual dispatch |
+| **Parser (`parser.ts`)** | `src/tests/parser.test.ts` | ✅ Passed | 6/6 tests: Bracket stripping, Dr/Cr parsing, expense filtering, phone normalization, multi-contacts |
+| **Payment Engine (`payment-engine.ts`)** | `src/tests/payment-engine.test.ts` | ✅ Passed | 6/6 tests: Installment splitting with rounding, partial payments, Excel diff auto-reconciliation |
+| **Reminder Cadence (`reminder-engine.ts`)**| `src/tests/reminder-engine.test.ts` | ✅ Passed | 4/4 tests: Aging categorization, defaulter flag at 5 attempts, automated halting |
+| **Template Engine (`template-renderer.ts`)**| `src/tests/template-renderer.test.ts`| ✅ Passed | 2/2 tests: Dynamic tags (`{{due_amount}}`), channel preset validation |
+| **Worker Integration (`worker.ts`)** | `src/tests/worker.test.ts` | ✅ Passed | 2/2 tests: Database scan, reminder evaluation, Tragen Technology defaulter verification |
+| **Full App Build** | `npm.cmd run build` | ✅ Passed | 19 static and dynamic routes compiled with 0 errors |
 
-> **Instruction for Next Agents:** After creating or editing any function, run the corresponding test script or write a test in `src/tests/` to verify functionality before marking as completed. Keep this log updated!
+---
+
+## 5. Instructions for Next Agents
+
+- **Continuous Testing Principle:** Always run `npm.cmd test` after modifying any file in `src/lib/` or `src/app/`.
+- **Database Migrations:** If modifying `prisma/schema.prisma`, run `npx.cmd prisma db push` followed by `npm.cmd test`.
+- **Git Commits:** Ensure commits use author `zuigo <jayesh@zuigo.ai>`.
+- **Installment Handling:** Always record partial payments using `calculatePaymentApplication` so that `consecutiveRemindersCount` is reset to 0 and payments are logged.

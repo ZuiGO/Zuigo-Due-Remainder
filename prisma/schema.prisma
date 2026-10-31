@@ -1,0 +1,143 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Customer {
+  id                        String              @id @default(cuid())
+  rawLedgerName             String
+  normalizedName            String              @unique
+  status                    String              @default("ACTIVE") // ACTIVE | FLAGGED | EXCLUDED
+  consecutiveRemindersCount Int                 @default(0)
+  isFlagged                 Boolean             @default(false)
+  flaggedAt                 DateTime?
+  flagReason                String?
+  defaultCreditDays         Int                 @default(30)
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+
+  contacts                  CustomerContact[]
+  dues                      Due[]
+  reminderSchedules         ReminderSchedule[]
+  reminderLogs              ReminderLog[]
+}
+
+model CustomerContact {
+  id              String    @id @default(cuid())
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  personName      String?
+  mobileNumber    String?
+  emailId         String?
+  isPrimary       Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+}
+
+model Due {
+  id                  String           @id @default(cuid())
+  customerId          String
+  customer            Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  originalBalance     Float
+  remainingBalance    Float
+  totalPaid           Float            @default(0)
+  balanceType         String           @default("Dr") // Dr (Debit = Due) | Cr (Credit = Advance)
+  dueDate             DateTime
+  status              String           @default("UPCOMING") // UPCOMING | DUE_TODAY | PARTIALLY_PAID | OVERDUE | SETTLED
+  importBatchId       String?
+  lastImportedAt      DateTime         @default(now())
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  installments        Installment[]
+  paymentRecords      PaymentRecord[]
+  reminderLogs        ReminderLog[]
+}
+
+model Installment {
+  id                String    @id @default(cuid())
+  dueId             String
+  due               Due       @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  installmentNumber Int
+  amount            Float
+  paidAmount        Float     @default(0)
+  dueDate           DateTime
+  status            String    @default("PENDING") // PENDING | PARTIAL | PAID | OVERDUE
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model PaymentRecord {
+  id                  String    @id @default(cuid())
+  dueId               String
+  due                 Due       @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  amountPaid          Float
+  paymentDate         DateTime  @default(now())
+  paymentMode         String    @default("BANK_TRANSFER") // UPI | NEFT_RTGS | CHEQUE | CASH | EXCEL_RECONCILED
+  referenceNumber     String?   // UTR / Cheque No
+  nextInstallmentDate DateTime?
+  notes               String?
+  createdAt           DateTime  @default(now())
+}
+
+model ReminderSchedule {
+  id                     String    @id @default(cuid())
+  customerId             String?   // Null for global system default
+  customer               Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reminder1DaysBefore    Int       @default(3)
+  reminder2DaysAfter     Int       @default(0)
+  reminder3DaysAfter     Int       @default(3)
+  reminder4DaysAfter     Int       @default(7)
+  reminder5DaysAfter     Int       @default(15)
+  maxRemindersBeforeFlag Int       @default(5)
+  channels               String    @default("WHATSAPP,SMS,EMAIL")
+  isActive               Boolean   @default(true)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+}
+
+model MessageTemplate {
+  id           String        @id @default(cuid())
+  channel      String        // WHATSAPP | SMS | EMAIL
+  name         String
+  category     String        // GENTLE | ON_DUE | OVERDUE | URGENT | FINAL_NOTICE | PAYMENT_RECEIPT
+  subject      String?       // Used for emails
+  templateBody String
+  isDefault    Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  reminderLogs ReminderLog[]
+}
+
+model IntegrationSetting {
+  id           String   @id @default(cuid())
+  providerType String   // WHATSAPP | SMS | EMAIL
+  providerName String   // META_CLOUD_API | TWILIO | MSG91 | SMTP | RESEND | SIMULATOR
+  configJson   String   // JSON payload with encrypted/plain credentials
+  isEnabled    Boolean  @default(false)
+  isSandbox    Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+}
+
+model ReminderLog {
+  id                 String           @id @default(cuid())
+  customerId         String
+  customer           Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  dueId              String?
+  due                Due?             @relation(fields: [dueId], references: [id], onDelete: SetNull)
+  templateId         String?
+  template           MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  channel            String           // WHATSAPP | SMS | EMAIL
+  triggerType        String           @default("AUTOMATIC") // AUTOMATIC | MANUAL
+  recipient          String
+  status             String           @default("SENT") // QUEUED | SENT | DELIVERED | FAILED
+  messageContent     String
+  providerResponseId String?
+  errorMessage       String?
+  dispatchedAt       DateTime         @default(now())
+}
