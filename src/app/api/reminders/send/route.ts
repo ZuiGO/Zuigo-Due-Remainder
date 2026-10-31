@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { renderTemplate } from '@/lib/template-renderer';
-import { dispatchMessage } from '@/lib/dispatchers';
+import { 
+  dispatchMessage, 
+  buildChannelActionUrl, 
+  OVERRIDE_TARGET_PHONE, 
+  OVERRIDE_TARGET_EMAIL 
+} from '@/lib/dispatchers';
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,7 +19,9 @@ export async function POST(req: NextRequest) {
 
     const template = templateId
       ? await prisma.messageTemplate.findUnique({ where: { id: templateId } })
-      : null;
+      : await prisma.messageTemplate.findFirst({
+          where: { channel, category: 'OVERDUE' },
+        });
 
     const dues = await prisma.due.findMany({
       where: { id: { in: dueIds } },
@@ -31,17 +38,7 @@ export async function POST(req: NextRequest) {
       const customer = due.customer;
       const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
 
-      const recipient = channel === 'EMAIL' ? primaryContact?.emailId : primaryContact?.mobileNumber;
-
-      if (!recipient) {
-        results.push({
-          dueId: due.id,
-          customer: customer.rawLedgerName,
-          status: 'SKIPPED',
-          reason: `No valid ${channel} contact available`,
-        });
-        continue;
-      }
+      const effectiveRecipient = channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE;
 
       const vars = {
         customer_name: customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
@@ -65,21 +62,21 @@ export async function POST(req: NextRequest) {
         ? renderTemplate(customMessage, vars)
         : template
         ? renderTemplate(template.templateBody, vars)
-        : `Reminder: ₹${due.remainingBalance} is due for ${vars.customer_name}. Please remit.`;
+        : `Payment Reminder: ₹${due.remainingBalance} is pending for ${vars.customer_name}. Please clear your due.`;
 
       const subject = template?.subject
         ? renderTemplate(template.subject, vars)
-        : `Payment Reminder - Abhiyadna Machine Tools`;
+        : `Payment Due Reminder - Abhiyadna Machine Tools`;
 
       const dispatchResult = await dispatchMessage({
         channel,
-        recipient,
+        recipient: effectiveRecipient,
         messageContent,
         subject,
         isSandbox: true,
       });
 
-      // Record in logs
+      // Record log in PostgreSQL
       await prisma.reminderLog.create({
         data: {
           customerId: customer.id,
@@ -87,7 +84,7 @@ export async function POST(req: NextRequest) {
           templateId: template?.id || null,
           channel,
           triggerType: 'MANUAL',
-          recipient,
+          recipient: effectiveRecipient,
           status: dispatchResult.status,
           messageContent,
           providerResponseId: dispatchResult.providerResponseId || null,
@@ -115,16 +112,19 @@ export async function POST(req: NextRequest) {
       results.push({
         dueId: due.id,
         customer: customer.rawLedgerName,
-        recipient,
+        recipient: effectiveRecipient,
         channel,
         status: dispatchResult.status,
+        actionUrl: dispatchResult.actionUrl,
+        messageContent,
+        subject,
         flagged: shouldFlag,
       });
     }
 
     return NextResponse.json({
       success: true,
-      message: `Dispatched ${results.filter(r => r.status === 'SENT').length} reminders successfully`,
+      message: `Dispatched to ${results.length} customer(s). Direct links generated for ${channel}.`,
       results,
     });
   } catch (error: any) {

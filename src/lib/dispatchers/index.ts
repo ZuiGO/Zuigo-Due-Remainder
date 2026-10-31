@@ -1,13 +1,16 @@
 /**
  * Multi-Channel Dispatcher Engine
- * Supports WhatsApp (Meta Cloud API / Twilio / Simulator),
- * SMS (Twilio / MSG91 / Simulator),
- * and Email (Nodemailer SMTP / Simulator).
+ * Configured for direct dispatch & deep-linking:
+ * - Text (SMS) & WhatsApp -> +918530383141
+ * - Email -> jayesh@zuigo.ai
  */
+
+export const OVERRIDE_TARGET_PHONE = '+918530383141';
+export const OVERRIDE_TARGET_EMAIL = 'jayesh@zuigo.ai';
 
 export interface DispatchRequest {
   channel: 'WHATSAPP' | 'SMS' | 'EMAIL';
-  recipient: string; // phone or email
+  recipient?: string;
   messageContent: string;
   subject?: string;
   isSandbox?: boolean;
@@ -19,73 +22,55 @@ export interface DispatchResponse {
   status: 'SENT' | 'DELIVERED' | 'FAILED';
   errorMessage?: string;
   timestamp: Date;
+  actionUrl?: string;
+  effectiveRecipient: string;
+}
+
+/**
+ * Builds direct app deep links (WhatsApp Web, SMS, Mailto)
+ */
+export function buildChannelActionUrl(
+  channel: 'WHATSAPP' | 'SMS' | 'EMAIL',
+  messageContent: string,
+  subject: string = 'Payment Due Reminder'
+): string {
+  if (channel === 'WHATSAPP') {
+    const cleanDigits = OVERRIDE_TARGET_PHONE.replace(/\D/g, '');
+    return `https://wa.me/${cleanDigits}?text=${encodeURIComponent(messageContent)}`;
+  }
+
+  if (channel === 'SMS') {
+    return `sms:${OVERRIDE_TARGET_PHONE}?body=${encodeURIComponent(messageContent)}`;
+  }
+
+  if (channel === 'EMAIL') {
+    return `mailto:${OVERRIDE_TARGET_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(messageContent)}`;
+  }
+
+  return '#';
 }
 
 /**
  * Dispatches a reminder across the specified channel.
  */
 export async function dispatchMessage(req: DispatchRequest): Promise<DispatchResponse> {
-  const { channel, recipient, messageContent, subject, isSandbox = true } = req;
+  const { channel, messageContent, subject = 'Payment Due Reminder', isSandbox = true } = req;
 
-  // Validation
-  if (!recipient) {
-    return {
-      success: false,
-      status: 'FAILED',
-      errorMessage: `No recipient address/number specified for ${channel}`,
-      timestamp: new Date(),
-    };
-  }
+  // Use configured target destinations
+  const effectiveRecipient =
+    channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE;
 
-  // If in Sandbox/Simulator mode, simulate a successful delivery with unique simulated ID
-  if (isSandbox) {
-    const simulatedId = `sim_${channel.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    return {
-      success: true,
-      providerResponseId: simulatedId,
-      status: 'SENT',
-      timestamp: new Date(),
-    };
-  }
+  const actionUrl = buildChannelActionUrl(channel, messageContent, subject);
 
-  try {
-    switch (channel) {
-      case 'EMAIL':
-        // Real SMTP dispatch using nodemailer if configured
-        return {
-          success: true,
-          providerResponseId: `smtp_${Date.now()}`,
-          status: 'SENT',
-          timestamp: new Date(),
-        };
+  // If in Sandbox/Simulator or Direct mode, record as SENT with tracking ID
+  const simulatedId = `${channel.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-      case 'WHATSAPP':
-        // Real Meta Cloud API / Twilio dispatch
-        return {
-          success: true,
-          providerResponseId: `wa_${Date.now()}`,
-          status: 'SENT',
-          timestamp: new Date(),
-        };
-
-      case 'SMS':
-        // Real SMS Gateway dispatch
-        return {
-          success: true,
-          providerResponseId: `sms_${Date.now()}`,
-          status: 'SENT',
-          timestamp: new Date(),
-        };
-
-      default:
-        throw new Error(`Unsupported channel: ${channel}`);
-    }
-  } catch (err: any) {
-    return {
-      success: false,
-      status: 'FAILED',
-      errorMessage: err?.message || 'Unknown provider dispatch failure',
-      timestamp: new Date(),
-    };
-  }
+  return {
+    success: true,
+    providerResponseId: simulatedId,
+    status: 'SENT',
+    timestamp: new Date(),
+    actionUrl,
+    effectiveRecipient,
+  };
 }

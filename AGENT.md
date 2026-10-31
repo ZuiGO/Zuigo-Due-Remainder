@@ -9,7 +9,21 @@
 ## 1. System Architecture & Tech Stack
 
 - **Framework:** Next.js 14.2 (App Router) + React 18 + TypeScript + Tailwind CSS
-- **Database & ORM:** SQLite via **Prisma ORM** (`dev.db`), completely switchable to PostgreSQL by providing `DATABASE_URL="postgresql://..."` in `.env`.
+- **Database & ORM:** **PostgreSQL 18** (`zuigo_due_reminder`) on `localhost:5432` via **Prisma ORM** (`DATABASE_URL="postgresql://postgres:zuigo@localhost:5432/zuigo_due_reminder?schema=public"` in `.env`).
+  - **Tables Created in PostgreSQL:**
+    1. `Customer` — Master customer records, normalized names, status (`ACTIVE`, `FLAGGED`, `EXCLUDED`), reminder counters.
+    2. `CustomerContact` — Normalized 1-to-many contact profiles (phone, email, primary flag).
+    3. `Due` — Debit receivables (`Dr`), remaining balances, due dates, aging status.
+    4. `Installment` — Milestone installment plans ($N$ installments with due dates).
+    5. `PaymentRecord` — Partial payment logs with UTR/mode and next installment dates.
+    6. `MessageTemplate` — WhatsApp, SMS, and Email templates with dynamic placeholders.
+    7. `IntegrationSetting` — Channel API keys and provider toggles.
+    8. `ReminderLog` — Complete audit trail of dispatched reminders.
+    9. `ReminderSchedule` — Automated cadence intervals ($T-3$, $0$, $T+3$, $T+7$, $T+15$, and 5-reminder threshold).
+- **Direct Dispatch & Test Target Routing:**
+  - **WhatsApp Message:** Directly opens WhatsApp Web / App (`https://wa.me/918530383141?text=...`) targeting **`+918530383141`**, while recording the reminder log in PostgreSQL.
+  - **Text Message (SMS):** Directly opens the SMS application (`sms:+918530383141?body=...`) targeting **`+918530383141`**, while recording the reminder log in PostgreSQL.
+  - **Email:** Directly opens the default email client (`mailto:jayesh@zuigo.ai?subject=...&body=...`) targeting **`jayesh@zuigo.ai`**, while recording the reminder log in PostgreSQL.
 - **Data Ingestion:** SheetJS (`xlsx`) + Custom Regex Normalizer (`src/lib/parser.ts`) that strips ERP bracketed codes (e.g. `[ ABMATO ]`), replaces parentheses, formats phone numbers to standard E.164 (`+91...`), and parses semicolon-delimited multiple contacts (`Smit Satpute ; Vinod Kale`).
 - **Payment & Installment Engine (`src/lib/payment-engine.ts`):**
   - **Milestone Installment Splitting:** Splits any balance into $N$ equal installments with rounding protection on the final installment.

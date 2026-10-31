@@ -520,74 +520,161 @@ export default function DuesPage() {
         </div>
       )}
 
-      {/* MODAL 3: MANUAL REMINDER DISPATCH */}
+      {/* MODAL 3: MANUAL REMINDER DISPATCH (WHATSAPP, TEXT, EMAIL WITH INSTANT OPEN) */}
       {activeModal === 'REMIND' && selectedDue && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-slate-900">
                 <Send className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-bold text-base text-slate-900">Dispatch Payment Reminder</h3>
+                <h3 className="font-bold text-base text-slate-900">Send Payment Reminder</h3>
               </div>
               <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
 
-            <div className="text-xs text-slate-600">
-              Sending to: <strong>{selectedDue.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim()}</strong> (₹{selectedDue.remainingBalance.toLocaleString('en-IN')})
-            </div>
-
-            <form onSubmit={submitManualReminder} className="space-y-4">
+            {/* Target Account Summary */}
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs flex items-center justify-between">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Select Channel</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRemindChannel('WHATSAPP')}
-                    className={`py-2 px-3 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 ${
-                      remindChannel === 'WHATSAPP'
-                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <MessageSquare className="w-3.5 h-3.5 text-emerald-600" /> WhatsApp
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRemindChannel('SMS')}
-                    className={`py-2 px-3 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 ${
-                      remindChannel === 'SMS'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Smartphone className="w-3.5 h-3.5 text-indigo-600" /> SMS
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRemindChannel('EMAIL')}
-                    className={`py-2 px-3 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 ${
-                      remindChannel === 'EMAIL'
-                        ? 'border-sky-500 bg-sky-50 text-sky-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Mail className="w-3.5 h-3.5 text-sky-600" /> Email
-                  </button>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Target Customer</span>
+                <div className="font-bold text-slate-900 text-sm">
+                  {selectedDue.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim()}
                 </div>
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Custom Message / Note (Optional)</label>
-                <textarea
-                  value={customRemindMessage}
-                  onChange={(e) => setCustomRemindMessage(e.target.value)}
-                  placeholder="Leave empty to use active default template..."
-                  rows={4}
-                  className="w-full text-xs p-3 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Pending Due</span>
+                <div className="font-bold text-emerald-600 text-sm">
+                  ₹{selectedDue.remainingBalance.toLocaleString('en-IN')}
+                </div>
               </div>
+            </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+            {/* Channel Options */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase mb-2">
+                1. Select Channel (Whichever you click can open directly)
+              </label>
+              <div className="grid grid-cols-3 gap-2.5">
+                {/* WhatsApp Option */}
+                <button
+                  type="button"
+                  onClick={() => setRemindChannel('WHATSAPP')}
+                  className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+                    remindChannel === 'WHATSAPP'
+                      ? 'border-emerald-500 bg-emerald-50/70 ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-emerald-800 flex items-center gap-1.5">
+                      <MessageSquare className="w-4 h-4 text-emerald-600" /> WhatsApp
+                    </span>
+                    {remindChannel === 'WHATSAPP' && <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" />}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono mt-2 truncate">
+                    +918530383141
+                  </div>
+                </button>
+
+                {/* Text Message (SMS) Option */}
+                <button
+                  type="button"
+                  onClick={() => setRemindChannel('SMS')}
+                  className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+                    remindChannel === 'SMS'
+                      ? 'border-indigo-500 bg-indigo-50/70 ring-2 ring-indigo-500/20'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-indigo-800 flex items-center gap-1.5">
+                      <Smartphone className="w-4 h-4 text-indigo-600" /> Text (SMS)
+                    </span>
+                    {remindChannel === 'SMS' && <Check className="w-3.5 h-3.5 text-indigo-600 font-bold" />}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono mt-2 truncate">
+                    +918530383141
+                  </div>
+                </button>
+
+                {/* Email Option */}
+                <button
+                  type="button"
+                  onClick={() => setRemindChannel('EMAIL')}
+                  className={`p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+                    remindChannel === 'EMAIL'
+                      ? 'border-sky-500 bg-sky-50/70 ring-2 ring-sky-500/20'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-sky-800 flex items-center gap-1.5">
+                      <Mail className="w-4 h-4 text-sky-600" /> Email
+                    </span>
+                    {remindChannel === 'EMAIL' && <Check className="w-3.5 h-3.5 text-sky-600 font-bold" />}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono mt-2 truncate">
+                    jayesh@zuigo.ai
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Configured Route Notice */}
+            <div className="p-2.5 rounded-lg bg-indigo-50 border border-indigo-100 text-[11px] text-indigo-900 flex items-center justify-between">
+              <div>
+                <strong>Active Route:</strong>{' '}
+                {remindChannel === 'EMAIL'
+                  ? 'Email will open & dispatch to: jayesh@zuigo.ai'
+                  : `Text & WhatsApp will open & dispatch to: +918530383141`}
+              </div>
+              <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+                Verified
+              </span>
+            </div>
+
+            {/* Message Editor */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700 uppercase">
+                  2. Message Text Preview (Editable)
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sampleText = `Dear Customer, this is a reminder from Abhiyadna Machine Tools that payment of Rs ${selectedDue.remainingBalance.toLocaleString('en-IN')} for ${selectedDue.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim()} is pending. Due Date: ${new Date(selectedDue.dueDate).toLocaleDateString('en-IN')}. Please remit to HDFC Bank A/C: 50200012345678, IFSC: HDFC0001234. Thank you!`;
+                    setCustomRemindMessage(sampleText);
+                  }}
+                  className="text-[11px] font-bold text-indigo-600 hover:underline"
+                >
+                  Load Standard Template
+                </button>
+              </div>
+              <textarea
+                value={
+                  customRemindMessage ||
+                  `Dear Customer, this is a reminder from Abhiyadna Machine Tools that payment of Rs ${selectedDue.remainingBalance.toLocaleString('en-IN')} for ${selectedDue.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim()} is pending. Due Date: ${new Date(selectedDue.dueDate).toLocaleDateString('en-IN')}. Please remit to HDFC Bank A/C: 50200012345678, IFSC: HDFC0001234. Thank you!`
+                }
+                onChange={(e) => setCustomRemindMessage(e.target.value)}
+                rows={5}
+                className="w-full text-xs p-3 rounded-xl border border-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 leading-relaxed"
+              />
+            </div>
+
+            {/* Action Buttons: Open Directly & Record in DB */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  const txt = customRemindMessage || `Payment reminder for Rs ${selectedDue.remainingBalance}`;
+                  navigator.clipboard.writeText(txt);
+                  alert('Message copied to clipboard!');
+                }}
+                className="px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                Copy Text
+              </button>
+
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setActiveModal(null)}
@@ -595,14 +682,41 @@ export default function DuesPage() {
                 >
                   Cancel
                 </button>
+
                 <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold bg-slate-900 text-white rounded-lg hover:bg-slate-800 flex items-center gap-1"
+                  type="button"
+                  onClick={async (e) => {
+                    const txt =
+                      customRemindMessage ||
+                      `Dear Customer, payment of Rs ${selectedDue.remainingBalance} for ${selectedDue.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim()} is pending. Due Date: ${new Date(selectedDue.dueDate).toLocaleDateString('en-IN')}. Please remit to Abhiyadna Machine Tools.`;
+
+                    // 1. Open the selected app directly
+                    if (remindChannel === 'WHATSAPP') {
+                      window.open(`https://wa.me/918530383141?text=${encodeURIComponent(txt)}`, '_blank');
+                    } else if (remindChannel === 'SMS') {
+                      window.location.href = `sms:+918530383141?body=${encodeURIComponent(txt)}`;
+                    } else if (remindChannel === 'EMAIL') {
+                      window.location.href = `mailto:jayesh@zuigo.ai?subject=${encodeURIComponent('Payment Due Reminder - Abhiyadna Machine Tools')}&body=${encodeURIComponent(txt)}`;
+                    }
+
+                    // 2. Submit to backend API to log in PostgreSQL
+                    await submitManualReminder(e);
+                  }}
+                  className={`px-5 py-2.5 text-xs font-bold text-white rounded-xl shadow-md transition flex items-center gap-2 ${
+                    remindChannel === 'WHATSAPP'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : remindChannel === 'SMS'
+                      ? 'bg-indigo-600 hover:bg-indigo-700'
+                      : 'bg-sky-600 hover:bg-sky-700'
+                  }`}
                 >
-                  <Send className="w-3 h-3" /> Send Reminder Now
+                  <Send className="w-3.5 h-3.5" />
+                  {remindChannel === 'WHATSAPP' && 'Open in WhatsApp (+918530383141) & Log'}
+                  {remindChannel === 'SMS' && 'Open Text SMS (+918530383141) & Log'}
+                  {remindChannel === 'EMAIL' && 'Open Mail (jayesh@zuigo.ai) & Log'}
                 </button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
