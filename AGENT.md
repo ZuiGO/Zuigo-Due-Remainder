@@ -1,7 +1,8 @@
 # AGENT.md — Developer & Autonomous Agent Handover Guide
 
-> **Repository:** Zuigo Due Remainder  
+> **Repository:** [ZuiGO/Zuigo-Due-Remainder](https://github.com/ZuiGO/Zuigo-Due-Remainder)  
 > **Git Identity:** `zuigo <jayesh@zuigo.ai>`  
+> **Remote Origin:** `https://github.com/ZuiGO/Zuigo-Due-Remainder.git`  
 > **Platform Purpose:** Automated and manual receivables recovery platform that ingests accounting ledgers & customer contact directories, tracks due dates & installment plans, automates multi-channel payment reminders (WhatsApp, SMS, Email), automatically flags defaulters after 4-5 unanswered reminders, and reconciles payments.
 
 ---
