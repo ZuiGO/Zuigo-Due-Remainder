@@ -16,34 +16,65 @@ export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get('content-type') || '';
 
-    let buffer: Buffer | null = null;
-    let fileName = 'Uploaded_File.xlsx';
+    interface FileEntry {
+      name: string;
+      buffer: Buffer;
+      feedType: string;
+    }
+
+    const fileEntries: FileEntry[] = [];
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
-      const file = formData.get('file') as File | null;
+      // Support both multiple files ('files') and single file ('file')
+      const multiFiles = formData.getAll('files') as File[];
+      const singleFile = formData.get('file') as File | null;
 
-      if (!file) {
+      const rawList = multiFiles.length > 0 ? multiFiles : singleFile ? [singleFile] : [];
+
+      if (rawList.length === 0) {
         return NextResponse.json(
-          { error: 'No file uploaded. Please select your SAP Dues or Customer Contacts file.' },
+          { error: 'No files uploaded. Please select your SAP Dues or Customer Contacts file(s).' },
           { status: 400 }
         );
       }
 
-      fileName = file.name;
-      const arrayBuffer = await file.arrayBuffer();
-      buffer = Buffer.from(arrayBuffer);
+      for (const f of rawList) {
+        const arrayBuf = await f.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        try {
+          const wb = XLSX.read(buf, { type: 'buffer' });
+          const feed = detectFeedType(wb);
+          fileEntries.push({
+            name: f.name,
+            buffer: buf,
+            feedType: feed,
+          });
+        } catch {
+          // If unreadable as workbook, try CSV text fallback
+          fileEntries.push({
+            name: f.name,
+            buffer: buf,
+            feedType: 'UNKNOWN',
+          });
+        }
+      }
     } else {
       const body = await req.json();
       if (body.csvText) {
-        buffer = Buffer.from(body.csvText);
-        fileName = 'pasted_data.csv';
+        const buf = Buffer.from(body.csvText);
+        const wb = XLSX.read(buf, { type: 'buffer' });
+        fileEntries.push({
+          name: 'pasted_data.csv',
+          buffer: buf,
+          feedType: detectFeedType(wb),
+        });
       }
     }
 
-    if (!buffer) {
+    if (fileEntries.length === 0) {
       return NextResponse.json(
-        { error: 'Please upload an Excel (.xlsx, .xls) or CSV file.' },
+        { error: 'Please upload Excel (.xlsx, .xls) or CSV file(s).' },
         { status: 400 }
       );
     }
@@ -63,43 +94,59 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Read workbook and detect feed structure
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const feedType = detectFeedType(workbook);
+    // 2. Identify and separate files by type
+    // If user uploads both SAP Dues AND Customer Contacts at once:
+    // Process CONTACTS FIRST so the customer directory and phone/email mappings exist,
+    // and then process SAP DUES SECOND so bills immediately match to the contacts.
+    const contactFiles = fileEntries.filter(
+      f => f.feedType === 'CUSTOMER_CONTACTS' || f.feedType === 'MULTI_SHEET'
+    );
+    const duesFiles = fileEntries.filter(
+      f => f.feedType === 'SAP_DUES' || f.feedType === 'MULTI_SHEET'
+    );
 
-    if (feedType === 'UNKNOWN') {
+    if (contactFiles.length === 0 && duesFiles.length === 0) {
       return NextResponse.json(
         {
           error:
-            'Could not recognize file columns. Please upload an Outstanding Receivable export or a Customer Contact sheet.',
+            'Could not recognize file columns. Please upload an Outstanding Receivable export, a Customer Contact sheet, or both.',
         },
         { status: 422 }
       );
     }
 
-    let diffSummary = null;
-    let contactsSummary = null;
+    let contactsSummary: any = null;
+    let diffSummary: any = null;
     let autoDispatchSummary: any = null;
 
-    // 3. Process according to detected feed type
-    if (feedType === 'SAP_DUES' || feedType === 'MULTI_SHEET') {
-      const parsedBills = parseSapDuesExport(buffer);
-      diffSummary = await reconcileDailySapExport(tenant.id, fileName, parsedBills);
+    // 3. Process Customer Contacts first
+    for (const cf of contactFiles) {
+      const parsedContacts = parseCustomerContacts(cf.buffer);
+      const res = await ingestCustomerContacts(tenant.id, parsedContacts);
+      if (!contactsSummary) {
+        contactsSummary = res;
+      } else {
+        contactsSummary.contactsCreated += res.contactsCreated;
+        contactsSummary.contactsUpdated += res.contactsUpdated;
+        contactsSummary.missingContactsCount = res.missingContactsCount;
+      }
     }
 
-    if (feedType === 'CUSTOMER_CONTACTS' || feedType === 'MULTI_SHEET') {
-      const parsedContacts = parseCustomerContacts(buffer);
-      contactsSummary = await ingestCustomerContacts(tenant.id, parsedContacts);
+    // 4. Process SAP Dues second
+    for (const df of duesFiles) {
+      const parsedBills = parseSapDuesExport(df.buffer);
+      const res = await reconcileDailySapExport(tenant.id, df.name, parsedBills);
+      diffSummary = res; // Keeps latest diff summary
     }
 
-    // 4. Default Autonomous Agent Execution:
+    // 5. Default Autonomous Agent Execution:
     // If autoReminderEnabled is true (default ON), automatically scan due/overdue bills and dispatch consolidated digests
     const schedule = await prisma.reminderSchedule.findFirst({
       where: { customerId: null },
     });
     const autoDispatchActive = schedule?.autoReminderEnabled ?? true;
 
-    if (autoDispatchActive && (feedType === 'SAP_DUES' || feedType === 'MULTI_SHEET')) {
+    if (autoDispatchActive && duesFiles.length > 0) {
       try {
         autoDispatchSummary = await executeTenantDigestRun(tenant.id);
       } catch (err: any) {
@@ -107,25 +154,40 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 5. Construct comprehensive user confirmation message
-    let baseMsg = '';
-    if (feedType === 'SAP_DUES') {
-      baseMsg = `Daily SAP Export processed! ${diffSummary?.newEntriesCount} new bills, ${diffSummary?.sameEntriesCount} unchanged, ${diffSummary?.partialPaymentsCount} partial payments detected, and ${diffSummary?.settledEntriesCount} settled.`;
-    } else if (feedType === 'CUSTOMER_CONTACTS') {
-      baseMsg = `Customer Contact Master processed! ${contactsSummary?.contactsCreated} contacts created, ${contactsSummary?.contactsUpdated} updated${contactsSummary?.missingContactsCount ? ` (${contactsSummary.missingContactsCount} parties have missing contacts)` : ''}.`;
-    } else {
-      baseMsg = `Multi-sheet workbook processed! Dues reconciled and contacts mapped.`;
+    // 6. Build unified confirmation message for single or simultaneous dual-file upload
+    const msgParts: string[] = [];
+
+    if (fileEntries.length > 1) {
+      msgParts.push(`Simultaneous upload successful (${fileEntries.length} files processed)!`);
+    }
+
+    if (contactsSummary) {
+      msgParts.push(
+        `Customer Contacts: ${contactsSummary.contactsCreated} created, ${contactsSummary.contactsUpdated} updated${
+          contactsSummary.missingContactsCount
+            ? ` (${contactsSummary.missingContactsCount} parties need contacts)`
+            : ''
+        }.`
+      );
+    }
+
+    if (diffSummary) {
+      msgParts.push(
+        `Daily SAP Export: ${diffSummary.newEntriesCount} new bills, ${diffSummary.sameEntriesCount} unchanged, ${diffSummary.partialPaymentsCount} partial payments detected, and ${diffSummary.settledEntriesCount} settled.`
+      );
     }
 
     if (autoDispatchSummary && autoDispatchSummary.messagesSent > 0) {
-      baseMsg += ` 🚀 Autonomous Agent dispatched ${autoDispatchSummary.messagesSent} reminder digests to ${autoDispatchSummary.customersProcessed} customer(s) across WhatsApp, SMS, and Email!`;
+      msgParts.push(
+        `🚀 Autonomous Agent dispatched ${autoDispatchSummary.messagesSent} reminder digest(s) to ${autoDispatchSummary.customersProcessed} customer(s)!`
+      );
     }
 
     return NextResponse.json({
       success: true,
-      feedType,
-      fileName,
-      message: baseMsg,
+      filesProcessedCount: fileEntries.length,
+      files: fileEntries.map(f => ({ name: f.name, feedType: f.feedType })),
+      message: msgParts.join(' '),
       diffSummary,
       contactsSummary,
       autoDispatchSummary,
@@ -133,7 +195,7 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('File Upload & Ingestion error:', error);
     return NextResponse.json(
-      { error: error?.message || 'Server error processing file' },
+      { error: error?.message || 'Server error processing file(s)' },
       { status: 500 }
     );
   }

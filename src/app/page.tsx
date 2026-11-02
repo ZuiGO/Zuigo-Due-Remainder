@@ -60,7 +60,7 @@ export default function DashboardPage() {
 
   // Upload modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -197,22 +197,22 @@ export default function DashboardPage() {
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedFiles(Array.from(e.target.files));
     }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setSelectedFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      setSelectedFiles(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFile) {
+    if (selectedFiles.length === 0) {
       setUploadMsg('Please select an Excel (.xlsx, .xls) or CSV file first.');
       return;
     }
@@ -221,7 +221,9 @@ export default function DashboardPage() {
       setUploading(true);
       setUploadMsg(null);
       const formData = new FormData();
-      formData.append('file', selectedFile);
+      selectedFiles.forEach((file) => {
+        formData.append('files', file);
+      });
 
       const res = await fetch('/api/upload', {
         method: 'POST',
@@ -233,10 +235,10 @@ export default function DashboardPage() {
         setUploadMsg(data.message || 'Import successful!');
         setTimeout(() => {
           setShowUploadModal(false);
-          setSelectedFile(null);
+          setSelectedFiles([]);
           setUploadMsg(null);
           fetchDashboardData();
-        }, 2000);
+        }, 2500);
       } else {
         setUploadMsg(data.error || 'Failed to import file');
       }
@@ -829,7 +831,7 @@ export default function DashboardPage() {
             </div>
 
             <p className="text-xs text-slate-500 leading-relaxed">
-              Upload your daily SAP Outstanding Receivable export (ALV HTML / .xls / .xlsx / .csv) or Customer Contact sheet. Filenames are automatically detected by structure.
+              Upload your daily SAP Outstanding Receivable export and/or Customer Contact master. <strong>You can select or drag both files at once</strong>; contacts are mapped first, dues reconciled second, and autonomous reminders triggered automatically.
             </p>
 
             <form onSubmit={handleUploadSubmit} className="space-y-4">
@@ -838,10 +840,10 @@ export default function DashboardPage() {
                 onDragLeave={() => setIsDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition ${
+                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition ${
                   isDragOver
                     ? 'border-indigo-500 bg-indigo-50/50'
-                    : selectedFile
+                    : selectedFiles.length > 0
                     ? 'border-emerald-400 bg-emerald-50/30'
                     : 'border-slate-300 hover:border-indigo-400 bg-slate-50/50'
                 }`}
@@ -849,22 +851,33 @@ export default function DashboardPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept=".xlsx, .xls, .csv, .html"
                   onChange={handleFileChange}
                   className="hidden"
                 />
-                <FileUp className={`w-10 h-10 mx-auto mb-2 ${selectedFile ? 'text-emerald-600' : 'text-slate-400'}`} />
-                {selectedFile ? (
-                  <div>
-                    <p className="text-xs font-bold text-slate-900">{selectedFile.name}</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      {(selectedFile.size / 1024).toFixed(1)} KB • Click or drag to change
+                <FileUp className={`w-9 h-9 mx-auto mb-2 ${selectedFiles.length > 0 ? 'text-emerald-600' : 'text-slate-400'}`} />
+                {selectedFiles.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-bold text-slate-900">
+                      {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected:
                     </p>
+                    <div className="flex flex-wrap justify-center gap-2 max-h-32 overflow-y-auto">
+                      {selectedFiles.map((f, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 text-[11px] font-semibold">
+                          📄 {f.name} ({(f.size / 1024).toFixed(1)} KB)
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">Click or drag more files to replace</p>
                   </div>
                 ) : (
                   <div>
-                    <p className="text-xs font-bold text-slate-700">Click to choose file or drag & drop</p>
-                    <p className="text-[11px] text-slate-400 mt-1">Supports SAP ALV (.xls), Excel (.xlsx), and CSV files</p>
+                    <p className="text-xs font-bold text-slate-700">Click to choose file(s) or drag & drop</p>
+                    <p className="text-[11px] text-indigo-600 font-semibold mt-1">
+                      💡 Pro-Tip: You can select both SAP Dues (.xls) and Contact Sheet (.xlsx) together!
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Supports SAP ALV HTML, Excel (.xlsx/.xls), and CSV</p>
                   </div>
                 )}
               </div>
@@ -889,18 +902,22 @@ export default function DashboardPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={uploading || !selectedFile}
+                  disabled={uploading || selectedFiles.length === 0}
                   className="px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 shadow-md transition flex items-center gap-1.5"
                 >
                   {uploading ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Diffing & Reconciling...</span>
+                      <span>Processing & Reconciling...</span>
                     </>
                   ) : (
                     <>
                       <Upload className="w-3.5 h-3.5" />
-                      <span>Ingest & Reconcile with DB</span>
+                      <span>
+                        {selectedFiles.length > 1
+                          ? `Ingest Both ${selectedFiles.length} Files Simultaneously`
+                          : 'Ingest & Reconcile with DB'}
+                      </span>
                     </>
                   )}
                 </button>
