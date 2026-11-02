@@ -78,55 +78,64 @@ export async function POST(req: NextRequest) {
     // 3. Update integrations
     for (const item of integrations) {
       if (item.providerType) {
-        await prisma.integrationSetting.upsert({
-          where: { id: item.id || 'none' },
-          update: {
-            providerName: item.providerName,
-            configJson: item.configJson,
-            isEnabled: item.isEnabled ?? true,
-            isSandbox: item.isSandbox ?? true,
-          },
-          create: {
+        // Upsert by providerType + tenantId
+        const existingIntegration = await prisma.integrationSetting.findFirst({
+          where: {
             providerType: item.providerType,
-            providerName: item.providerName || 'SIMULATOR',
-            configJson: item.configJson || '{}',
-            isEnabled: item.isEnabled ?? true,
-            isSandbox: item.isSandbox ?? true,
+            tenantId: item.tenantId || null,
           },
         });
+
+        if (existingIntegration) {
+          await prisma.integrationSetting.update({
+            where: { id: existingIntegration.id },
+            data: {
+              providerName: item.providerName || existingIntegration.providerName,
+              configJson: typeof item.configJson === 'string' ? item.configJson : JSON.stringify(item.configJson || {}),
+              isEnabled: item.isEnabled ?? true,
+              isSandbox: item.isSandbox ?? true,
+            },
+          });
+        } else {
+          await prisma.integrationSetting.create({
+            data: {
+              tenantId: item.tenantId || null,
+              providerType: item.providerType,
+              providerName: item.providerName || 'SIMULATOR',
+              configJson: typeof item.configJson === 'string' ? item.configJson : JSON.stringify(item.configJson || {}),
+              isEnabled: item.isEnabled ?? true,
+              isSandbox: item.isSandbox ?? true,
+            },
+          });
+        }
       }
     }
 
-    // 4. Update schedule
+    // 4. Update automated cadence schedule & agent auto-dispatch toggle
     if (schedule) {
       const existing = await prisma.reminderSchedule.findFirst({
         where: { customerId: null },
       });
 
+      const scheduleData = {
+        reminder1DaysBefore: Number(schedule.reminder1DaysBefore ?? 3),
+        reminder2DaysAfter: Number(schedule.reminder2DaysAfter ?? 0),
+        reminder3DaysAfter: Number(schedule.reminder3DaysAfter ?? 3),
+        reminder4DaysAfter: Number(schedule.reminder4DaysAfter ?? 7),
+        reminder5DaysAfter: Number(schedule.reminder5DaysAfter ?? 15),
+        maxRemindersBeforeFlag: Number(schedule.maxRemindersBeforeFlag ?? 5),
+        channels: schedule.channels || 'WHATSAPP,SMS,EMAIL',
+        autoReminderEnabled: schedule.autoReminderEnabled ?? true,
+      };
+
       if (existing) {
         await prisma.reminderSchedule.update({
           where: { id: existing.id },
-          data: {
-            reminder1DaysBefore: Number(schedule.reminder1DaysBefore),
-            reminder2DaysAfter: Number(schedule.reminder2DaysAfter),
-            reminder3DaysAfter: Number(schedule.reminder3DaysAfter),
-            reminder4DaysAfter: Number(schedule.reminder4DaysAfter),
-            reminder5DaysAfter: Number(schedule.reminder5DaysAfter),
-            maxRemindersBeforeFlag: Number(schedule.maxRemindersBeforeFlag),
-            channels: schedule.channels || 'WHATSAPP,SMS,EMAIL',
-          },
+          data: scheduleData,
         });
       } else {
         await prisma.reminderSchedule.create({
-          data: {
-            reminder1DaysBefore: Number(schedule.reminder1DaysBefore),
-            reminder2DaysAfter: Number(schedule.reminder2DaysAfter),
-            reminder3DaysAfter: Number(schedule.reminder3DaysAfter),
-            reminder4DaysAfter: Number(schedule.reminder4DaysAfter),
-            reminder5DaysAfter: Number(schedule.reminder5DaysAfter),
-            maxRemindersBeforeFlag: Number(schedule.maxRemindersBeforeFlag),
-            channels: schedule.channels || 'WHATSAPP,SMS,EMAIL',
-          },
+          data: scheduleData,
         });
       }
     }

@@ -129,10 +129,12 @@
 │           │   ├── send/route.ts           <-- Manual reminder trigger with action URLs
 │           │   ├── auto-check/route.ts     <-- Full auto cron trigger
 │           │   └── approval-queue/route.ts <-- Semi-automated daily approval queue & selective dispatch
+│           ├── settings/
+│           │   ├── route.ts                <-- White-label tenant branding & gateway settings
+│           │   └── test-connection/route.ts<-- Live gateway connection tester (WhatsApp, SMS, Email)
 │           ├── webhooks/
 │           │   └── inbound/route.ts        <-- Inbound SMS STOP, WhatsApp opt-out, email bounce & free-text webhook
 │           ├── templates/route.ts    <-- Template CRUD
-│           ├── settings/route.ts     <-- White-label tenant branding & gateway settings
 │           └── logs/route.ts         <-- Delivery logs
 ```
 
@@ -144,19 +146,29 @@
    ```powershell
    npx prisma db push
    ```
-2. **Run All 16 Integration & Unit Tests Across 6 Test Suites:**
+2. **Run All 21 Integration & Unit Tests Across 7 Test Suites:**
    ```powershell
-   npx tsx --test src/tests/multi-tenant-schema.test.ts src/tests/alv-and-diff.test.ts src/tests/promise-to-pay.test.ts src/tests/digest-engine.test.ts src/tests/approval-queue-and-contacts.test.ts src/tests/webhooks-and-grace-period.test.ts
+   npx tsx --test src/tests/multi-tenant-schema.test.ts src/tests/alv-and-diff.test.ts src/tests/promise-to-pay.test.ts src/tests/digest-engine.test.ts src/tests/approval-queue-and-contacts.test.ts src/tests/webhooks-and-grace-period.test.ts src/tests/multi-day-diff-and-auto-dispatch.test.ts
    ```
-   *Expected Output: 16 tests across 6 suites passing (100% PASS).*
+   *Expected Output: 21 tests across 7 suites passing (100% PASS).*
 
-3. **Compile Production Build (27 Routes):**
+3. **Generate Multi-Day Diff Excels:**
+   ```powershell
+   npx tsx src/scripts/generate-test-excels.ts
+   ```
+
+4. **Verify Autonomous Agent & Multi-Day Diff Progression:**
+   ```powershell
+   npx tsx src/scripts/verify-upload-and-auto-dispatch.ts
+   ```
+
+5. **Compile Production Build (28 Routes):**
    ```powershell
    npm run build
    ```
-   *Verified: All 27 Next.js static and dynamic routes compile cleanly with 0 errors.*
+   *Verified: All 28 Next.js static and dynamic routes compile cleanly with 0 errors.*
 
-4. **Start Development Server:**
+6. **Start Development Server:**
    ```powershell
    npm run dev
    ```

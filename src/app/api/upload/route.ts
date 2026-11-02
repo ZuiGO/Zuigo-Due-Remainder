@@ -10,6 +10,7 @@ import {
   reconcileDailySapExport,
   ingestCustomerContacts,
 } from '@/lib/diff-engine';
+import { executeTenantDigestRun } from '@/lib/digest-engine';
 
 export async function POST(req: NextRequest) {
   try {
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
 
     let diffSummary = null;
     let contactsSummary = null;
+    let autoDispatchSummary: any = null;
 
     // 3. Process according to detected feed type
     if (feedType === 'SAP_DUES' || feedType === 'MULTI_SHEET') {
@@ -90,18 +92,43 @@ export async function POST(req: NextRequest) {
       contactsSummary = await ingestCustomerContacts(tenant.id, parsedContacts);
     }
 
+    // 4. Default Autonomous Agent Execution:
+    // If autoReminderEnabled is true (default ON), automatically scan due/overdue bills and dispatch consolidated digests
+    const schedule = await prisma.reminderSchedule.findFirst({
+      where: { customerId: null },
+    });
+    const autoDispatchActive = schedule?.autoReminderEnabled ?? true;
+
+    if (autoDispatchActive && (feedType === 'SAP_DUES' || feedType === 'MULTI_SHEET')) {
+      try {
+        autoDispatchSummary = await executeTenantDigestRun(tenant.id);
+      } catch (err: any) {
+        console.error('Auto-dispatch error on import:', err);
+      }
+    }
+
+    // 5. Construct comprehensive user confirmation message
+    let baseMsg = '';
+    if (feedType === 'SAP_DUES') {
+      baseMsg = `Daily SAP Export processed! ${diffSummary?.newEntriesCount} new bills, ${diffSummary?.sameEntriesCount} unchanged, ${diffSummary?.partialPaymentsCount} partial payments detected, and ${diffSummary?.settledEntriesCount} settled.`;
+    } else if (feedType === 'CUSTOMER_CONTACTS') {
+      baseMsg = `Customer Contact Master processed! ${contactsSummary?.contactsCreated} contacts created, ${contactsSummary?.contactsUpdated} updated${contactsSummary?.missingContactsCount ? ` (${contactsSummary.missingContactsCount} parties have missing contacts)` : ''}.`;
+    } else {
+      baseMsg = `Multi-sheet workbook processed! Dues reconciled and contacts mapped.`;
+    }
+
+    if (autoDispatchSummary && autoDispatchSummary.messagesSent > 0) {
+      baseMsg += ` 🚀 Autonomous Agent dispatched ${autoDispatchSummary.messagesSent} reminder digests to ${autoDispatchSummary.customersProcessed} customer(s) across WhatsApp, SMS, and Email!`;
+    }
+
     return NextResponse.json({
       success: true,
       feedType,
       fileName,
-      message:
-        feedType === 'SAP_DUES'
-          ? `Daily SAP Export processed! ${diffSummary?.newEntriesCount} new bills, ${diffSummary?.sameEntriesCount} unchanged, ${diffSummary?.partialPaymentsCount} partial payments detected, and ${diffSummary?.settledEntriesCount} settled.`
-          : feedType === 'CUSTOMER_CONTACTS'
-          ? `Customer Contact Master processed! ${contactsSummary?.contactsCreated} contacts created, ${contactsSummary?.contactsUpdated} updated${contactsSummary?.missingContactsCount ? ` (${contactsSummary.missingContactsCount} parties have missing contacts)` : ''}.`
-          : `Multi-sheet workbook processed! Dues reconciled and contacts mapped.`,
+      message: baseMsg,
       diffSummary,
       contactsSummary,
+      autoDispatchSummary,
     });
   } catch (error: any) {
     console.error('File Upload & Ingestion error:', error);
