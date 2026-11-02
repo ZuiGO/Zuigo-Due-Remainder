@@ -101,18 +101,43 @@ export async function POST(req: NextRequest) {
       });
 
       // Record log in PostgreSQL
-      await prisma.reminderLog.create({
-        data: {
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      await prisma.reminderLog.upsert({
+        where: {
+          tenantId_customerId_channel_sentDate: {
+            tenantId: customer.tenantId,
+            customerId: customer.id,
+            channel,
+            sentDate: todayStr,
+          },
+        },
+        update: {
+          recipient: effectiveRecipient,
+          subject,
+          messageContent,
+          status: dispatchResult.status,
+          providerResponseId: dispatchResult.providerResponseId || null,
+          errorMessage: dispatchResult.errorMessage || null,
+          triggerType: 'MANUAL',
+          dispatchedAt: new Date(),
+        },
+        create: {
+          tenantId: customer.tenantId,
           customerId: customer.id,
-          invoiceId: invoice.id,
           templateId: template?.id || null,
           channel,
           triggerType: 'MANUAL',
           recipient: effectiveRecipient,
+          subject,
           status: dispatchResult.status,
           messageContent,
           providerResponseId: dispatchResult.providerResponseId || null,
           errorMessage: dispatchResult.errorMessage || null,
+          sentDate: todayStr,
+          bills: {
+            create: [{ invoiceId: invoice.id }],
+          },
         },
       });
 

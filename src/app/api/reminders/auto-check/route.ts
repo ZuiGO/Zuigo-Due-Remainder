@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { runAutomatedReminderCheck } from '@/lib/worker';
+import prisma from '@/lib/db';
+import { executeTenantDigestRun } from '@/lib/digest-engine';
 
 export async function POST(req: NextRequest) {
   try {
-    const summary = await runAutomatedReminderCheck();
+    const tenant = await prisma.tenant.findFirst({
+      where: { slug: 'abmato' },
+    });
+
+    if (!tenant) {
+      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    }
+
+    const summary = await executeTenantDigestRun(tenant.id);
+
     return NextResponse.json({
       success: true,
-      message: `Automated check complete: ${summary.remindersSent} reminders sent, ${summary.flaggedCount} customers flagged`,
+      message: summary.locked
+        ? summary.message
+        : `Daily Digest dispatch complete: Processed ${summary.customersProcessed} customer(s), Sent ${summary.messagesSent} reminder digest(s).`,
       summary,
     });
   } catch (error: any) {

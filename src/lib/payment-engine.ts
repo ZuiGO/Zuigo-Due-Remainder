@@ -1,8 +1,10 @@
 /**
  * Payment & Installment Engine
  * Manages installment calculations, payment application,
- * Excel diff reconciliation, and due settlement.
+ * Promise-to-Pay (PTP) commitments, and due settlement.
  */
+
+import prisma from './db';
 
 export interface InstallmentPlanItem {
   installmentNumber: number;
@@ -19,6 +21,29 @@ export interface PaymentApplicationResult {
   isSettled: boolean;
   status: 'SETTLED' | 'PARTIALLY_PAID';
   resetConsecutiveReminders: boolean;
+}
+
+export interface PromiseToPayInput {
+  invoiceId: string;
+  amountPaid: number;
+  promisedAmount: number;
+  promisedDate: Date;
+  paymentMode?: string;
+  referenceNumber?: string;
+  notes?: string;
+  recordedBy?: string;
+}
+
+export interface PromiseToPayResult {
+  success: boolean;
+  previousBalance: number;
+  amountPaid: number;
+  remainingBalance: number;
+  promisedAmount: number;
+  promisedDate: Date;
+  invoiceStatus: string;
+  nextFollowupDate: Date;
+  message: string;
 }
 
 /**
@@ -60,67 +85,129 @@ export function calculateInstallmentPlan(
  * Applies a payment against an existing due balance.
  */
 export function calculatePaymentApplication(
-  currentRemainingBalance: number,
+  currentBalance: number,
   currentTotalPaid: number,
-  paymentAmount: number
+  amountPaid: number
 ): PaymentApplicationResult {
-  const safePayment = Math.max(0, paymentAmount);
-  const newRemainingBalance = Math.max(0, Math.round((currentRemainingBalance - safePayment) * 100) / 100);
-  const newTotalPaid = Math.round((currentTotalPaid + safePayment) * 100) / 100;
+  const safePayment = Math.max(0, Number(amountPaid));
+  const newRemainingBalance = Math.max(0, currentBalance - safePayment);
+  const newTotalPaid = currentTotalPaid + safePayment;
   const isSettled = newRemainingBalance <= 0;
 
   return {
-    previousBalance: currentRemainingBalance,
+    previousBalance: currentBalance,
     amountPaid: safePayment,
     newRemainingBalance,
     newTotalPaid,
     isSettled,
     status: isSettled ? 'SETTLED' : 'PARTIALLY_PAID',
-    resetConsecutiveReminders: true, // Recording payment resets aggressive reminder counter!
+    resetConsecutiveReminders: true,
   };
 }
 
 /**
- * Reconciles changes when a fresh Excel ledger report is imported.
- * Detects if a customer paid an installment between imports.
+ * Records a partial payment and creates a Promise-to-Pay (PTP) commitment for the remainder.
+ * Pauses automated reminders by setting nextFollowupDate = promisedDate.
  */
-export function reconcileLedgerBalanceChange(
-  previousBalance: number,
-  newImportedBalance: number,
-  newBalanceType: 'Dr' | 'Cr'
-): {
-  action: 'NO_CHANGE' | 'PAYMENT_DETECTED' | 'SETTLED' | 'BALANCE_INCREASED';
-  difference: number;
-  detectedPaymentAmount?: number;
-} {
-  // If previously Debit, and now Credit or 0
-  if (newBalanceType === 'Cr' || newImportedBalance <= 0) {
-    return {
-      action: 'SETTLED',
-      difference: previousBalance,
-      detectedPaymentAmount: previousBalance,
-    };
+export async function recordPartialPaymentWithPromise(
+  input: PromiseToPayInput
+): Promise<PromiseToPayResult> {
+  const {
+    invoiceId,
+    amountPaid,
+    promisedAmount,
+    promisedDate,
+    paymentMode = 'BANK_TRANSFER',
+    referenceNumber,
+    notes,
+    recordedBy = 'Accounts Executive',
+  } = input;
+
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    include: { customer: true },
+  });
+
+  if (!invoice) {
+    throw new Error('Invoice not found');
   }
 
-  const diff = Math.round((previousBalance - newImportedBalance) * 100) / 100;
+  const previousBalance = invoice.outstandingAmount;
+  const newRemaining = Math.max(0, previousBalance - amountPaid);
+  const isSettled = newRemaining === 0;
+  const newStatus = isSettled ? 'Payment Received' : 'Partially Paid';
 
-  if (diff > 0) {
-    // Balance reduced -> customer paid an installment!
-    return {
-      action: 'PAYMENT_DETECTED',
-      difference: diff,
-      detectedPaymentAmount: diff,
-    };
-  } else if (diff < 0) {
-    // Balance increased -> new invoice added
-    return {
-      action: 'BALANCE_INCREASED',
-      difference: Math.abs(diff),
-    };
+  // 1. Create Payment Record
+  if (amountPaid > 0) {
+    await prisma.paymentRecord.create({
+      data: {
+        invoiceId: invoice.id,
+        amountPaid,
+        paymentMode,
+        referenceNumber: referenceNumber || null,
+        notes: notes || `Partial payment of ₹${amountPaid} recorded`,
+      },
+    });
   }
+
+  // 2. Create PromiseToPayCommitment if balance remains
+  if (!isSettled && promisedAmount > 0) {
+    await prisma.promiseToPayCommitment.create({
+      data: {
+        invoiceId: invoice.id,
+        promisedAmount,
+        promisedDate: new Date(promisedDate),
+        status: 'ACTIVE',
+        notes: notes || `Customer promised remaining ₹${promisedAmount} on ${new Date(promisedDate).toLocaleDateString('en-IN')}`,
+        recordedBy,
+      },
+    });
+  }
+
+  // 3. Update Invoice: Pauses reminders until promisedDate
+  const nextFollowup = isSettled ? null : new Date(promisedDate);
+
+  await prisma.invoice.update({
+    where: { id: invoice.id },
+    data: {
+      previousOutstandingAmount: previousBalance,
+      outstandingAmount: newRemaining,
+      adjustment: invoice.adjustment + amountPaid,
+      status: newStatus,
+      nextFollowUpDate: nextFollowup,
+    },
+  });
+
+  // 4. Update Customer total outstanding and reset reminder count
+  const allCustomerInvoices = await prisma.invoice.findMany({
+    where: { customerId: invoice.customerId },
+  });
+  const activeRemaining = allCustomerInvoices.reduce((sum, inv) => {
+    return sum + (inv.id === invoice.id ? newRemaining : inv.outstandingAmount);
+  }, 0);
+
+  await prisma.customer.update({
+    where: { id: invoice.customerId },
+    data: {
+      totalOutstanding: activeRemaining,
+      consecutiveRemindersCount: 0, // Acknowledged partial payment
+      isFlagged: activeRemaining === 0 ? false : invoice.customer.isFlagged,
+    },
+  });
+
+  const formattedDate = new Date(promisedDate).toLocaleDateString('en-IN');
 
   return {
-    action: 'NO_CHANGE',
-    difference: 0,
+    success: true,
+    previousBalance,
+    amountPaid,
+    remainingBalance: newRemaining,
+    promisedAmount,
+    promisedDate: new Date(promisedDate),
+    invoiceStatus: newStatus,
+    nextFollowupDate: nextFollowup || new Date(),
+    message: isSettled
+      ? `Full payment of ₹${amountPaid.toLocaleString('en-IN')} received. Invoice marked as Settled!`
+      : `Payment of ₹${amountPaid.toLocaleString('en-IN')} received. Remainder of ₹${promisedAmount.toLocaleString('en-IN')} committed for ${formattedDate}. Reminders paused until then.`,
   };
 }

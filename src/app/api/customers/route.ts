@@ -3,8 +3,13 @@ import prisma from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
+    const tenant = await prisma.tenant.findFirst({
+      where: { slug: 'abmato' },
+    });
+
     const customers = await prisma.customer.findMany({
       where: {
+        tenantId: tenant?.id,
         status: { not: 'EXCLUDED' },
       },
       include: {
@@ -27,21 +32,30 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { customerId, isFlagged, flagReason } = body;
+    const { customerId, isFlagged, flagReason, reminderEnabled, pauseNote } = body;
 
     if (!customerId) {
       return NextResponse.json({ error: 'customerId required' }, { status: 400 });
     }
 
+    const updateData: any = {};
+
+    if (isFlagged !== undefined) {
+      updateData.isFlagged = Boolean(isFlagged);
+      updateData.status = isFlagged ? 'FLAGGED' : 'ACTIVE';
+      updateData.flaggedAt = isFlagged ? new Date() : null;
+      updateData.flagReason = isFlagged ? flagReason || 'Flagged manually' : null;
+      updateData.consecutiveRemindersCount = isFlagged ? 5 : 0;
+    }
+
+    if (reminderEnabled !== undefined) {
+      updateData.reminderEnabled = Boolean(reminderEnabled);
+      updateData.pauseNote = pauseNote || (reminderEnabled ? null : 'Paused by user');
+    }
+
     const updated = await prisma.customer.update({
       where: { id: customerId },
-      data: {
-        isFlagged: Boolean(isFlagged),
-        status: isFlagged ? 'FLAGGED' : 'ACTIVE',
-        flaggedAt: isFlagged ? new Date() : null,
-        flagReason: isFlagged ? flagReason || 'Flagged manually' : null,
-        consecutiveRemindersCount: isFlagged ? 5 : 0, // Reset count on manual restore
-      },
+      data: updateData,
     });
 
     return NextResponse.json({ success: true, customer: updated });

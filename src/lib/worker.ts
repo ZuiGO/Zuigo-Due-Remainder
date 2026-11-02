@@ -180,18 +180,40 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
       });
 
       // Log in database
-      await prisma.reminderLog.create({
-        data: {
+      const todayStr = new Date().toISOString().split('T')[0];
+      await prisma.reminderLog.upsert({
+        where: {
+          tenantId_customerId_channel_sentDate: {
+            tenantId: customer.tenantId,
+            customerId: customer.id,
+            channel: ch,
+            sentDate: todayStr,
+          },
+        },
+        update: {
+          recipient,
+          messageContent,
+          status: dispatchResult.status,
+          providerResponseId: dispatchResult.providerResponseId || null,
+          errorMessage: dispatchResult.errorMessage || null,
+          dispatchedAt: new Date(),
+        },
+        create: {
+          tenantId: customer.tenantId,
           customerId: customer.id,
-          invoiceId: invoice.id,
           templateId: template?.id || null,
           channel: ch,
           triggerType: 'AUTOMATIC',
           recipient,
+          subject,
           status: dispatchResult.status,
           messageContent,
           providerResponseId: dispatchResult.providerResponseId || null,
           errorMessage: dispatchResult.errorMessage || null,
+          sentDate: todayStr,
+          bills: {
+            create: [{ invoiceId: invoice.id }],
+          },
         },
       });
 

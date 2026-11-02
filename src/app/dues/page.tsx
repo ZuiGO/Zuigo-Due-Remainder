@@ -12,14 +12,16 @@ import {
   CheckCircle, 
   MessageSquare, 
   Mail, 
-  Phone,
-  Sparkles,
-  Upload,
-  FileSpreadsheet,
-  FileUp,
-  RefreshCw,
-  Clock,
-  Filter
+  Phone, 
+  Sparkles, 
+  Upload, 
+  FileSpreadsheet, 
+  FileUp, 
+  RefreshCw, 
+  Clock, 
+  Filter, 
+  CalendarClock, 
+  Layers 
 } from 'lucide-react';
 
 export default function DuesPage() {
@@ -38,6 +40,11 @@ export default function DuesPage() {
   const [referenceNo, setReferenceNo] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
   const [sendReceipt, setSendReceipt] = useState(true);
+
+  // Promise-to-Pay states
+  const [enablePromiseToPay, setEnablePromiseToPay] = useState(false);
+  const [promisedAmount, setPromisedAmount] = useState('');
+  const [promisedDate, setPromisedDate] = useState('');
 
   // Installment form states
   const [installmentCount, setInstallmentCount] = useState(3);
@@ -80,6 +87,14 @@ export default function DuesPage() {
     setPaymentAmount(String(inv.outstandingAmount));
     setReferenceNo('');
     setPaymentNotes('');
+
+    // Default promised date = next week
+    const defaultDate = new Date();
+    defaultDate.setDate(defaultDate.getDate() + 7);
+    setPromisedDate(defaultDate.toISOString().split('T')[0]);
+    setPromisedAmount('');
+    setEnablePromiseToPay(false);
+
     setActiveModal('PAYMENT');
   };
 
@@ -98,7 +113,7 @@ export default function DuesPage() {
 
   const submitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedInvoice || !paymentAmount) return;
+    if (!selectedInvoice || paymentAmount === '') return;
     try {
       const res = await fetch('/api/payments', {
         method: 'POST',
@@ -106,6 +121,8 @@ export default function DuesPage() {
         body: JSON.stringify({
           invoiceId: selectedInvoice.id,
           amountPaid: Number(paymentAmount),
+          promisedAmount: enablePromiseToPay && promisedAmount ? Number(promisedAmount) : undefined,
+          promisedDate: enablePromiseToPay && promisedDate ? promisedDate : undefined,
           paymentMode,
           referenceNumber: referenceNo,
           notes: paymentNotes,
@@ -118,6 +135,8 @@ export default function DuesPage() {
         setActiveModal(null);
         fetchDues();
         setTimeout(() => setActionMessage(null), 4000);
+      } else {
+        alert(data.error || 'Payment error');
       }
     } catch (err: any) {
       alert('Error recording payment: ' + err?.message);
@@ -179,7 +198,7 @@ export default function DuesPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: selectedInvoice.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
+          customerName: (selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName).trim(),
           contactPerson: contact?.personName || 'Sir / Madam',
           billNo: selectedInvoice.billNo,
           outstandingAmount: selectedInvoice.outstandingAmount,
@@ -244,13 +263,13 @@ export default function DuesPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setUploadMsg(`Import successful! Processed ${data.stats.invoicesCreated} invoices.`);
+        setUploadMsg(data.message || 'Import successful!');
         setTimeout(() => {
           setActiveModal(null);
           setSelectedFile(null);
           setUploadMsg(null);
           fetchDues();
-        }, 1600);
+        }, 1800);
       } else {
         setUploadMsg(data.error || 'Upload error');
       }
@@ -271,7 +290,7 @@ export default function DuesPage() {
             Invoices & Dues Management
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Separated Bill Amount, Paid / Adjusted, and Outstanding Dues. Track multiple invoices and contacts per customer.
+            Separated Bill Amount, Paid / Adjusted, and Outstanding Dues. Track multiple invoices, contacts, and Promise-to-Pay commitments.
           </p>
         </div>
 
@@ -284,7 +303,7 @@ export default function DuesPage() {
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition"
         >
           <Upload className="w-4 h-4 text-indigo-600" />
-          Import Excel Sheet
+          Import SAP Dues / Contacts
         </button>
       </div>
 
@@ -298,7 +317,6 @@ export default function DuesPage() {
 
       {/* Filter Tabs and Search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        {/* Status Filters */}
         <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 text-xs font-semibold overflow-x-auto">
           {['ALL', 'UPCOMING', 'DUE_TODAY', 'OVERDUE', 'FLAGGED', 'SETTLED'].map((tab) => (
             <button
@@ -315,7 +333,6 @@ export default function DuesPage() {
           ))}
         </div>
 
-        {/* Search Input */}
         <div className="relative w-full sm:w-72">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
           <input
@@ -339,7 +356,7 @@ export default function DuesPage() {
                 <th className="py-3 px-6">Bill Amount (₹)</th>
                 <th className="py-3 px-6">Paid / Adjusted (₹)</th>
                 <th className="py-3 px-6 text-rose-600">Outstanding Due (₹)</th>
-                <th className="py-3 px-6">Due Date & Aging</th>
+                <th className="py-3 px-6">Due Date & Commitment</th>
                 <th className="py-3 px-6">Payment Status</th>
                 <th className="py-3 px-6 text-right">Actions</th>
               </tr>
@@ -357,7 +374,7 @@ export default function DuesPage() {
                       <p className="text-sm font-bold text-slate-700">No Invoices Found</p>
                       <p className="text-xs text-slate-500">
                         {filter === 'ALL' && !search 
-                          ? 'Upload your Excel sheet to populate real customer bills and dues.'
+                          ? 'Upload your SAP Outstanding Receivable export or Contact sheet to populate real customer bills.'
                           : 'No records match the selected filter criteria.'}
                       </p>
                     </div>
@@ -366,13 +383,15 @@ export default function DuesPage() {
               ) : (
                 invoices.map((inv: any) => {
                   const contacts = inv.customer?.contacts || [];
-                  const primaryContact = contacts[0];
+                  const primaryContact = contacts.find((c: any) => c.isPrimary) || contacts[0];
+                  const commitment = inv.commitments && inv.commitments.length > 0 ? inv.commitments[0] : null;
+
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
                       {/* Customer & Contacts */}
                       <td className="py-4 px-6 font-medium text-slate-900 max-w-xs">
                         <div>
-                          <span className="font-bold">{inv.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim()}</span>
+                          <span className="font-bold">{inv.customer.partyName || inv.customer.rawLedgerName}</span>
                           {inv.customer.isFlagged && (
                             <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">
                               <ShieldAlert className="w-3 h-3" /> Flagged (≥5 Notices)
@@ -383,7 +402,7 @@ export default function DuesPage() {
                           <div className="text-[11px] text-slate-500 mt-1 space-y-0.5">
                             <div>
                               <span className="font-semibold text-slate-700">{primaryContact?.personName || 'Contact'}:</span>{' '}
-                              {primaryContact?.mobileNumber || primaryContact?.mobileNumber2 || 'No phone'}
+                              {primaryContact?.mobileNumber || primaryContact?.whatsappNumber || 'No phone'}
                             </div>
                             {primaryContact?.emailId && (
                               <div className="text-slate-400 truncate">{primaryContact.emailId}</div>
@@ -423,7 +442,7 @@ export default function DuesPage() {
                         </div>
                       </td>
 
-                      {/* Due Date & Aging */}
+                      {/* Due Date & Commitment */}
                       <td className="py-4 px-6">
                         <div className="text-xs font-semibold text-slate-800">
                           {new Date(inv.dueDate).toLocaleDateString('en-IN', {
@@ -441,6 +460,17 @@ export default function DuesPage() {
                             <span className="text-slate-400">Due in {Math.abs(inv.daysOverdue)} days</span>
                           )}
                         </div>
+
+                        {/* Promise to Pay Badge */}
+                        {commitment && (
+                          <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                            <CalendarClock className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span>
+                              Promised ₹{commitment.promisedAmount.toLocaleString('en-IN')} on{' '}
+                              {new Date(commitment.promisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                            </span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Payment Status Dropdown */}
@@ -449,7 +479,7 @@ export default function DuesPage() {
                           value={inv.status}
                           onChange={(e) => handleStatusChange(inv.id, e.target.value)}
                           className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border focus:outline-none transition ${
-                            inv.status === 'Payment Received'
+                            inv.status === 'Payment Received' || inv.status === 'Closed'
                               ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
                               : inv.status === 'Partially Paid'
                               ? 'bg-amber-50 border-amber-300 text-amber-800'
@@ -467,12 +497,13 @@ export default function DuesPage() {
                           <option value="Disputed">Disputed</option>
                           <option value="Escalated">Escalated</option>
                           <option value="Legal Notice">Legal Notice</option>
+                          <option value="Closed">Closed</option>
                         </select>
                       </td>
 
                       {/* Actions */}
                       <td className="py-4 px-6 text-right space-x-1.5 whitespace-nowrap">
-                        {inv.status !== 'Payment Received' && (
+                        {inv.status !== 'Payment Received' && inv.status !== 'Closed' && (
                           <button
                             onClick={() => handleStatusChange(inv.id, 'Payment Received')}
                             title="Quick 1-Click Mark as Paid"
@@ -484,7 +515,7 @@ export default function DuesPage() {
 
                         <button
                           onClick={() => handleOpenPayment(inv)}
-                          title="Record partial installment payment"
+                          title="Record payment or Promise to Pay commitment"
                           className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition inline-flex items-center gap-1"
                         >
                           <CreditCard className="w-3 h-3" /> Record Pay
@@ -515,36 +546,92 @@ export default function DuesPage() {
         </div>
       </div>
 
-      {/* MODAL 1: RECORD PAYMENT */}
+      {/* MODAL 1: RECORD PAYMENT & PROMISE-TO-PAY COMMITMENT */}
       {activeModal === 'PAYMENT' && selectedInvoice && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-emerald-600">
                 <CreditCard className="w-5 h-5" />
-                <h3 className="font-bold text-base text-slate-900">Record Payment</h3>
+                <h3 className="font-bold text-base text-slate-900">Record Payment & Commitment</h3>
               </div>
               <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-50 text-xs text-slate-700 space-y-1">
-              <div className="font-bold text-slate-900">{selectedInvoice.customer.rawLedgerName}</div>
+              <div className="font-bold text-slate-900">{selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName}</div>
               <div>Bill No: <span className="font-mono font-bold text-indigo-600">{selectedInvoice.billNo}</span></div>
               <div>Current Outstanding: <strong className="text-rose-600">₹{selectedInvoice.outstandingAmount.toLocaleString('en-IN')}</strong></div>
             </div>
 
             <form onSubmit={submitPayment} className="space-y-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Amount Paid (₹)*</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount Paid Today (₹)*</label>
                 <input
                   type="number"
                   step="any"
                   required
                   value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPaymentAmount(val);
+                    const diff = selectedInvoice.outstandingAmount - Number(val);
+                    if (diff > 0) {
+                      setPromisedAmount(String(diff));
+                      setEnablePromiseToPay(true);
+                    } else {
+                      setEnablePromiseToPay(false);
+                    }
+                  }}
                   className="w-full text-sm font-semibold p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
+
+              {/* Promise-to-Pay Commitment Section */}
+              {Number(paymentAmount) < selectedInvoice.outstandingAmount && (
+                <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                      <CalendarClock className="w-4 h-4 text-amber-600" />
+                      Promise-to-Pay (PTP) Commitment
+                    </label>
+                    <input
+                      type="checkbox"
+                      id="enablePTP"
+                      checked={enablePromiseToPay}
+                      onChange={(e) => setEnablePromiseToPay(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  {enablePromiseToPay && (
+                    <div className="grid grid-cols-2 gap-2.5 pt-1">
+                      <div>
+                        <label className="block text-[11px] font-bold text-amber-800 mb-1">Promised Future Balance (₹)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={promisedAmount}
+                          onChange={(e) => setPromisedAmount(e.target.value)}
+                          className="w-full text-xs font-bold p-2 rounded-lg border border-amber-300 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-amber-800 mb-1">Promised Payment Date</label>
+                        <input
+                          type="date"
+                          value={promisedDate}
+                          onChange={(e) => setPromisedDate(e.target.value)}
+                          className="w-full text-xs font-bold p-2 rounded-lg border border-amber-300 bg-white"
+                        />
+                      </div>
+                      <p className="text-[10px] text-amber-700 col-span-2">
+                        💡 Setting a commitment date automatically pauses reminder alerts until that date arrives.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -578,22 +665,9 @@ export default function DuesPage() {
                   type="text"
                   value={paymentNotes}
                   onChange={(e) => setPaymentNotes(e.target.value)}
-                  placeholder="e.g. Part payment received via HDFC"
+                  placeholder="e.g. Paid ₹5,000 via UPI; promised balance next Monday"
                   className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
-              </div>
-
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="sendReceipt"
-                  checked={sendReceipt}
-                  onChange={(e) => setSendReceipt(e.target.checked)}
-                  className="rounded text-emerald-600 focus:ring-emerald-500"
-                />
-                <label htmlFor="sendReceipt" className="text-xs text-slate-700">
-                  Send instant payment receipt to customer via WhatsApp/Email
-                </label>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
@@ -608,7 +682,7 @@ export default function DuesPage() {
                   type="submit"
                   className="px-5 py-2 text-xs font-bold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 shadow-md transition"
                 >
-                  Record Payment & Update Status
+                  Confirm Payment & Schedule
                 </button>
               </div>
             </form>
@@ -629,7 +703,7 @@ export default function DuesPage() {
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-50 text-xs text-slate-700 space-y-1">
-              <div>Party: <strong>{selectedInvoice.customer.rawLedgerName}</strong></div>
+              <div>Party: <strong>{selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName}</strong></div>
               <div>Bill No: <span className="font-mono font-bold text-indigo-600">{selectedInvoice.billNo}</span></div>
               <div>Outstanding to Split: <strong className="text-indigo-600">₹{selectedInvoice.outstandingAmount.toLocaleString('en-IN')}</strong></div>
             </div>
@@ -702,7 +776,7 @@ export default function DuesPage() {
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-50 text-xs text-slate-700 space-y-1">
-              <div>Party: <strong>{selectedInvoice.customer.rawLedgerName}</strong></div>
+              <div>Party: <strong>{selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName}</strong></div>
               <div>Bill No: <span className="font-mono font-bold text-indigo-600">{selectedInvoice.billNo}</span></div>
               <div>Outstanding Amount: <strong className="text-rose-600">₹{selectedInvoice.outstandingAmount.toLocaleString('en-IN')}</strong></div>
               <div>Due Date: {new Date(selectedInvoice.dueDate).toLocaleDateString('en-IN')} ({selectedInvoice.daysOverdue} days overdue)</div>
@@ -809,20 +883,20 @@ export default function DuesPage() {
         </div>
       )}
 
-      {/* MODAL 4: UPLOAD EXCEL */}
+      {/* MODAL 4: UPLOAD SAP DUES / CONTACTS */}
       {activeModal === 'UPLOAD' && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-indigo-600">
                 <FileSpreadsheet className="w-6 h-6" />
-                <h3 className="font-bold text-base text-slate-900">Import Excel Sheet</h3>
+                <h3 className="font-bold text-base text-slate-900">Import SAP Dues / Contacts</h3>
               </div>
               <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
             </div>
 
             <p className="text-xs text-slate-500 leading-relaxed">
-              Upload your receivables workbook (.xlsx, .xls, or .csv). The system reads bill-level rows, contacts, aging brackets, and links multiple invoices per customer.
+              Upload your daily SAP Outstanding Receivable export (ALV HTML, .xls, .xlsx, .csv) or Customer Contact sheet. Structure is automatically detected by headers.
             </p>
 
             <form onSubmit={handleUploadSubmit} className="space-y-4">
@@ -833,7 +907,7 @@ export default function DuesPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".xlsx, .xls, .csv"
+                  accept=".xlsx, .xls, .csv, .html"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
                       setSelectedFile(e.target.files[0]);
@@ -849,15 +923,15 @@ export default function DuesPage() {
                   </div>
                 ) : (
                   <div>
-                    <p className="text-xs font-bold text-slate-700">Click to choose Excel file or drag & drop</p>
-                    <p className="text-[11px] text-slate-400 mt-1">Supports .xlsx, .xls, and .csv files</p>
+                    <p className="text-xs font-bold text-slate-700">Click to choose file or drag & drop</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Supports SAP ALV (.xls), Excel (.xlsx), and CSV files</p>
                   </div>
                 )}
               </div>
 
               {uploadMsg && (
                 <div className={`p-3 rounded-xl text-xs font-medium ${
-                  uploadMsg.includes('successful') 
+                  uploadMsg.includes('successful') || uploadMsg.includes('processed')
                     ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' 
                     : 'bg-rose-50 text-rose-800 border border-rose-200'
                 }`}>
@@ -881,12 +955,12 @@ export default function DuesPage() {
                   {uploading ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Ingesting...</span>
+                      <span>Diffing & Ingesting...</span>
                     </>
                   ) : (
                     <>
                       <Upload className="w-3.5 h-3.5" />
-                      <span>Upload & Ingest to PostgreSQL</span>
+                      <span>Ingest & Reconcile</span>
                     </>
                   )}
                 </button>

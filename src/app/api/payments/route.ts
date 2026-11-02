@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { renderTemplate } from '@/lib/template-renderer';
 import { dispatchMessage } from '@/lib/dispatchers';
+import { recordPartialPaymentWithPromise } from '@/lib/payment-engine';
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,20 +10,46 @@ export async function POST(req: NextRequest) {
     const invoiceId = body.invoiceId || body.dueId;
     const {
       amountPaid,
+      promisedAmount,
+      promisedDate,
       paymentDate = new Date(),
       paymentMode = 'BANK_TRANSFER',
       referenceNumber,
       notes,
+      recordedBy = 'Accounts Executive',
       sendReceipt = true,
     } = body;
 
-    if (!invoiceId || !amountPaid || Number(amountPaid) <= 0) {
+    if (!invoiceId || amountPaid === undefined || Number(amountPaid) < 0) {
       return NextResponse.json(
         { error: 'Valid invoiceId and amountPaid are required' },
         { status: 400 }
       );
     }
 
+    const payVal = Number(amountPaid);
+
+    // If Promise to Pay commitment is provided (e.g. remaining 5000 due next week)
+    if (promisedDate && Number(promisedAmount) > 0) {
+      const ptpResult = await recordPartialPaymentWithPromise({
+        invoiceId,
+        amountPaid: payVal,
+        promisedAmount: Number(promisedAmount),
+        promisedDate: new Date(promisedDate),
+        paymentMode,
+        referenceNumber,
+        notes,
+        recordedBy,
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: ptpResult.message,
+        ptpResult,
+      });
+    }
+
+    // Standard payment recording
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: {
@@ -36,7 +63,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invoice record not found' }, { status: 404 });
     }
 
-    const payVal = Number(amountPaid);
     const newOutstanding = Math.max(0, invoice.outstandingAmount - payVal);
     const newAdjustment = invoice.adjustment + payVal;
     const isSettled = newOutstanding === 0;
@@ -58,9 +84,11 @@ export async function POST(req: NextRequest) {
     const updatedInvoice = await prisma.invoice.update({
       where: { id: invoice.id },
       data: {
+        previousOutstandingAmount: invoice.outstandingAmount,
         outstandingAmount: newOutstanding,
         adjustment: newAdjustment,
         status: newStatus,
+        nextFollowUpDate: isSettled ? null : invoice.nextFollowUpDate,
       },
     });
 
@@ -68,7 +96,10 @@ export async function POST(req: NextRequest) {
     const customerInvoices = await prisma.invoice.findMany({
       where: { customerId: invoice.customerId },
     });
-    const totalRemaining = customerInvoices.reduce((sum, inv) => sum + (inv.id === invoice.id ? newOutstanding : inv.outstandingAmount), 0);
+    const totalRemaining = customerInvoices.reduce(
+      (sum, inv) => sum + (inv.id === invoice.id ? newOutstanding : inv.outstandingAmount),
+      0
+    );
 
     await prisma.customer.update({
       where: { id: invoice.customer.id },
@@ -80,53 +111,6 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // 4. Optionally dispatch receipt
-    let receiptSent = false;
-    if (sendReceipt) {
-      const primaryContact = invoice.customer.contacts.find(c => c.isPrimary) || invoice.customer.contacts[0];
-      if (primaryContact?.mobileNumber || primaryContact?.emailId) {
-        const receiptTemplate = await prisma.messageTemplate.findFirst({
-          where: { category: 'PAYMENT_RECEIPT' },
-        });
-
-        if (receiptTemplate) {
-          const vars = {
-            customer_name: invoice.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
-            contact_person: primaryContact?.personName || 'Sir / Madam',
-            last_payment_amount: payVal,
-            remaining_balance: newOutstanding,
-            next_installment_date: isSettled ? 'Cleared' : 'As per schedule',
-            company_name: 'Abhiyadna Machine Tools',
-          };
-
-          const messageText = renderTemplate(receiptTemplate.templateBody, vars);
-          const channel = primaryContact.mobileNumber ? 'WHATSAPP' : 'EMAIL';
-          const recipient = primaryContact.mobileNumber || primaryContact.emailId || '';
-
-          await dispatchMessage({
-            channel,
-            recipient,
-            messageContent: messageText,
-            isSandbox: true,
-          });
-
-          await prisma.reminderLog.create({
-            data: {
-              customerId: invoice.customer.id,
-              invoiceId: invoice.id,
-              templateId: receiptTemplate.id,
-              channel,
-              triggerType: 'MANUAL',
-              recipient,
-              status: 'SENT',
-              messageContent: messageText,
-            },
-          });
-          receiptSent = true;
-        }
-      }
-    }
-
     return NextResponse.json({
       success: true,
       message: isSettled
@@ -134,7 +118,6 @@ export async function POST(req: NextRequest) {
         : `Partial payment of ₹${payVal.toLocaleString('en-IN')} recorded for Bill ${invoice.billNo}. Remaining balance: ₹${newOutstanding.toLocaleString('en-IN')}`,
       paymentRecord,
       updatedInvoice,
-      receiptSent,
     });
   } catch (error: any) {
     console.error('Payment API error:', error);

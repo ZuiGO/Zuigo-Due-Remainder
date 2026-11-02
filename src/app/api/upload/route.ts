@@ -1,194 +1,113 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { parseExcelWorkbook, parseExcelCSVText } from '@/lib/parser';
+import * as XLSX from 'xlsx';
+import {
+  detectFeedType,
+  parseSapDuesExport,
+  parseCustomerContacts,
+} from '@/lib/parser';
+import {
+  reconcileDailySapExport,
+  ingestCustomerContacts,
+} from '@/lib/diff-engine';
 
 export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get('content-type') || '';
 
-    let parsedRecords = [];
+    let buffer: Buffer | null = null;
+    let fileName = 'Uploaded_File.xlsx';
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
 
       if (!file) {
-        return NextResponse.json({ error: 'No file uploaded. Please select an Excel (.xlsx, .xls) or CSV file.' }, { status: 400 });
+        return NextResponse.json(
+          { error: 'No file uploaded. Please select your SAP Dues or Customer Contacts file.' },
+          { status: 400 }
+        );
       }
 
+      fileName = file.name;
       const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      if (file.name.endsWith('.csv')) {
-        const text = buffer.toString('utf8');
-        parsedRecords = parseExcelCSVText(text);
-      } else {
-        parsedRecords = parseExcelWorkbook(buffer);
-      }
+      buffer = Buffer.from(arrayBuffer);
     } else {
-      // JSON payload support
       const body = await req.json();
       if (body.csvText) {
-        parsedRecords = parseExcelCSVText(body.csvText);
-      } else {
-        return NextResponse.json({ error: 'Please upload an Excel file or provide file data' }, { status: 400 });
+        buffer = Buffer.from(body.csvText);
+        fileName = 'pasted_data.csv';
       }
     }
 
-    if (parsedRecords.length === 0) {
-      return NextResponse.json({
-        error: 'No valid customer or invoice rows could be parsed from the file. Please check file format.',
-      }, { status: 422 });
+    if (!buffer) {
+      return NextResponse.json(
+        { error: 'Please upload an Excel (.xlsx, .xls) or CSV file.' },
+        { status: 400 }
+      );
     }
 
-    let customersCreated = 0;
-    let customersUpdated = 0;
-    let invoicesCreated = 0;
-    let invoicesUpdated = 0;
-    let contactsCreated = 0;
-    let totalImportedOutstanding = 0;
+    // 1. Resolve Active Tenant (defaults to pilot tenant 'abmato')
+    let tenant = await prisma.tenant.findFirst({
+      where: { slug: 'abmato' },
+    });
 
-    for (const record of parsedRecords) {
-      if (!record.isCustomer) continue; // skip non-customer internal ledgers
-
-      // 1. Upsert Customer
-      let customer = await prisma.customer.findUnique({
-        where: { normalizedName: record.normalizedName },
+    if (!tenant) {
+      tenant = await prisma.tenant.create({
+        data: {
+          slug: 'abmato',
+          companyName: 'Abhiyadna Machine Tools',
+          brandColor: '#4f46e5',
+        },
       });
+    }
 
-      if (!customer) {
-        customer = await prisma.customer.create({
-          data: {
-            rawLedgerName: record.partyName,
-            normalizedName: record.normalizedName,
-            overallPriority: record.overallPriority || 'Medium',
-            totalOutstanding: record.totalOutstanding,
-            status: 'ACTIVE',
-          },
-        });
-        customersCreated++;
-      } else {
-        customer = await prisma.customer.update({
-          where: { id: customer.id },
-          data: {
-            rawLedgerName: record.partyName,
-            overallPriority: record.overallPriority || customer.overallPriority,
-            totalOutstanding: record.totalOutstanding,
-          },
-        });
-        customersUpdated++;
-      }
+    // 2. Read workbook and detect feed structure
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const feedType = detectFeedType(workbook);
 
-      totalImportedOutstanding += record.totalOutstanding;
+    if (feedType === 'UNKNOWN') {
+      return NextResponse.json(
+        {
+          error:
+            'Could not recognize file columns. Please upload an Outstanding Receivable export or a Customer Contact sheet.',
+        },
+        { status: 422 }
+      );
+    }
 
-      // 2. Upsert Customer Contacts
-      for (const ct of record.contacts) {
-        if (!ct.personName && !ct.mobileNumber && !ct.emailId) continue;
+    let diffSummary = null;
+    let contactsSummary = null;
 
-        const existingContact = await prisma.customerContact.findFirst({
-          where: {
-            customerId: customer.id,
-          },
-        });
+    // 3. Process according to detected feed type
+    if (feedType === 'SAP_DUES' || feedType === 'MULTI_SHEET') {
+      const parsedBills = parseSapDuesExport(buffer);
+      diffSummary = await reconcileDailySapExport(tenant.id, fileName, parsedBills);
+    }
 
-        if (!existingContact) {
-          await prisma.customerContact.create({
-            data: {
-              customerId: customer.id,
-              personName: ct.personName || 'Accounts',
-              mobileNumber: ct.mobileNumber || null,
-              mobileNumber2: ct.mobileNumber2 || null,
-              mobileNumber3: ct.mobileNumber3 || null,
-              mobileNumber4: ct.mobileNumber4 || null,
-              emailId: ct.emailId || null,
-              emailId2: ct.emailId2 || null,
-              emailId3: ct.emailId3 || null,
-              emailId4: ct.emailId4 || null,
-              isPrimary: true,
-            },
-          });
-          contactsCreated++;
-        } else {
-          // Enrich existing contact
-          await prisma.customerContact.update({
-            where: { id: existingContact.id },
-            data: {
-              personName: ct.personName || existingContact.personName,
-              mobileNumber: ct.mobileNumber || existingContact.mobileNumber,
-              mobileNumber2: ct.mobileNumber2 || existingContact.mobileNumber2,
-              emailId: ct.emailId || existingContact.emailId,
-              emailId2: ct.emailId2 || existingContact.emailId2,
-            },
-          });
-        }
-      }
-
-      // 3. Upsert Invoices
-      for (const inv of record.invoices) {
-        const existingInv = await prisma.invoice.findFirst({
-          where: {
-            customerId: customer.id,
-            billNo: inv.billNo,
-          },
-        });
-
-        if (!existingInv) {
-          await prisma.invoice.create({
-            data: {
-              customerId: customer.id,
-              billNo: inv.billNo,
-              billDate: inv.billDate,
-              dueDate: inv.dueDate,
-              billAmount: inv.billAmount,
-              adjustment: inv.adjustment,
-              outstandingAmount: inv.outstandingAmount,
-              daysOverdue: inv.daysOverdue,
-              agingBucket: inv.agingBucket,
-              actionType: inv.actionType,
-              priority: inv.priority,
-              followUpChannel: inv.followUpChannel,
-              remainderFrequency: inv.remainderFrequency || null,
-              status: inv.status || 'Pending',
-              narration: inv.narration || null,
-            },
-          });
-          invoicesCreated++;
-        } else {
-          await prisma.invoice.update({
-            where: { id: existingInv.id },
-            data: {
-              billDate: inv.billDate,
-              dueDate: inv.dueDate,
-              billAmount: inv.billAmount,
-              adjustment: inv.adjustment,
-              outstandingAmount: inv.outstandingAmount,
-              daysOverdue: inv.daysOverdue,
-              agingBucket: inv.agingBucket,
-              actionType: inv.actionType,
-              priority: inv.priority,
-              status: inv.status || existingInv.status,
-              narration: inv.narration || existingInv.narration,
-            },
-          });
-          invoicesUpdated++;
-        }
-      }
+    if (feedType === 'CUSTOMER_CONTACTS' || feedType === 'MULTI_SHEET') {
+      const parsedContacts = parseCustomerContacts(buffer);
+      contactsSummary = await ingestCustomerContacts(tenant.id, parsedContacts);
     }
 
     return NextResponse.json({
       success: true,
-      message: `Excel imported successfully! Processed ${parsedRecords.length} parties.`,
-      stats: {
-        customersCreated,
-        customersUpdated,
-        invoicesCreated,
-        invoicesUpdated,
-        contactsCreated,
-        totalImportedOutstanding,
-      },
+      feedType,
+      fileName,
+      message:
+        feedType === 'SAP_DUES'
+          ? `Daily SAP Export processed! ${diffSummary?.newEntriesCount} new bills, ${diffSummary?.sameEntriesCount} unchanged, ${diffSummary?.partialPaymentsCount} partial payments detected, and ${diffSummary?.settledEntriesCount} settled.`
+          : feedType === 'CUSTOMER_CONTACTS'
+          ? `Customer Contact Master processed! ${contactsSummary?.contactsCreated} contacts created, ${contactsSummary?.contactsUpdated} updated${contactsSummary?.missingContactsCount ? ` (${contactsSummary.missingContactsCount} parties have missing contacts)` : ''}.`
+          : `Multi-sheet workbook processed! Dues reconciled and contacts mapped.`,
+      diffSummary,
+      contactsSummary,
     });
   } catch (error: any) {
     console.error('File Upload & Ingestion error:', error);
-    return NextResponse.json({ error: error?.message || 'Server error processing Excel file' }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || 'Server error processing file' },
+      { status: 500 }
+    );
   }
 }

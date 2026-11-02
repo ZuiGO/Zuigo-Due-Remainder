@@ -9,11 +9,19 @@ export async function GET(req: NextRequest) {
     const filter = searchParams.get('filter') || 'ALL'; // ALL | UPCOMING | DUE_TODAY | OVERDUE | FLAGGED | SETTLED
     const search = searchParams.get('search') || '';
 
+    // Get tenant
+    const tenant = await prisma.tenant.findFirst({
+      where: { slug: 'abmato' },
+    });
+
+    const tenantId = tenant?.id;
+
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
     const whereClause: any = {
+      tenantId,
       customer: {
         status: { not: 'EXCLUDED' },
       },
@@ -22,7 +30,8 @@ export async function GET(req: NextRequest) {
     if (search) {
       whereClause.OR = [
         { customer: { rawLedgerName: { contains: search, mode: 'insensitive' } } },
-        { customer: { normalizedName: { contains: search, mode: 'insensitive' } } },
+        { customer: { partyName: { contains: search, mode: 'insensitive' } } },
+        { customer: { ledgerCode: { contains: search } } },
         { billNo: { contains: search, mode: 'insensitive' } },
         { customer: { contacts: { some: { personName: { contains: search, mode: 'insensitive' } } } } },
         { customer: { contacts: { some: { mobileNumber: { contains: search } } } } },
@@ -34,20 +43,21 @@ export async function GET(req: NextRequest) {
     } else if (filter === 'SETTLED') {
       whereClause.OR = [
         { status: 'Payment Received' },
+        { status: 'Closed' },
         { outstandingAmount: { lte: 0 } },
       ];
     } else if (filter === 'OVERDUE') {
       whereClause.dueDate = { lt: todayStart };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { not: 'Payment Received' };
+      whereClause.status = { notIn: ['Payment Received', 'Closed'] };
     } else if (filter === 'DUE_TODAY') {
       whereClause.dueDate = { gte: todayStart, lte: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { not: 'Payment Received' };
+      whereClause.status = { notIn: ['Payment Received', 'Closed'] };
     } else if (filter === 'UPCOMING') {
       whereClause.dueDate = { gt: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { not: 'Payment Received' };
+      whereClause.status = { notIn: ['Payment Received', 'Closed'] };
     }
 
     const invoices = await prisma.invoice.findMany({
@@ -62,17 +72,23 @@ export async function GET(req: NextRequest) {
         payments: {
           orderBy: { paymentDate: 'desc' },
         },
-        reminderLogs: {
-          orderBy: { dispatchedAt: 'desc' },
+        commitments: {
+          orderBy: { createdAt: 'desc' },
+        },
+        reminderLogBills: {
+          include: {
+            reminderLog: true,
+          },
           take: 5,
         },
       },
       orderBy: { dueDate: 'asc' },
     });
 
-    // Compute live aging statistics for dashboard from all active invoices
+    // Compute live aging statistics for dashboard from all active invoices for this tenant
     const allInvoices = await prisma.invoice.findMany({
       where: {
+        tenantId,
         customer: { status: { not: 'EXCLUDED' } },
       },
       include: {
@@ -93,7 +109,7 @@ export async function GET(req: NextRequest) {
         flaggedCustomerIds.add(inv.customerId);
       }
 
-      if (inv.status === 'Payment Received' || inv.outstandingAmount <= 0) {
+      if (inv.status === 'Payment Received' || inv.status === 'Closed' || inv.outstandingAmount <= 0) {
         settledCount++;
         continue;
       }
@@ -111,8 +127,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Latest Import Batch for Daily Diff Card
+    const latestBatch = await prisma.importBatch.findFirst({
+      where: { tenantId },
+      orderBy: { importedAt: 'desc' },
+      include: {
+        diffLogs: {
+          take: 10,
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
     return NextResponse.json({
       success: true,
+      tenant: {
+        companyName: tenant?.companyName || 'Abhiyadna Machine Tools',
+        bankName: tenant?.bankName,
+        bankAccountNo: tenant?.bankAccountNo,
+        bankIfscCode: tenant?.bankIfscCode,
+        bankUpiId: tenant?.bankUpiId,
+        brandColor: tenant?.brandColor || '#4f46e5',
+      },
       stats: {
         totalReceivables,
         totalOverdueAmount,
@@ -123,7 +159,8 @@ export async function GET(req: NextRequest) {
         settledCount,
         totalCount: allInvoices.length,
       },
-      dues: invoices, // Kept as 'dues' key for seamless backward compatibility with existing components
+      latestBatch,
+      dues: invoices,
       invoices,
     });
   } catch (error: any) {

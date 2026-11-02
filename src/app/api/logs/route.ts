@@ -8,8 +8,10 @@ export async function GET(req: NextRequest) {
     const logs = await prisma.reminderLog.findMany({
       include: {
         customer: true,
-        invoice: true,
         template: true,
+        bills: {
+          include: { invoice: true },
+        },
       },
       orderBy: { dispatchedAt: 'desc' },
       take: 100,

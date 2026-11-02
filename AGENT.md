@@ -44,12 +44,15 @@
     - 60+ days overdue: Urgent escalation warning.
   - In the reminder modal, a **"✨ Generate with Groq AI"** button automatically crafts personalized ready-to-send messages.
 
-- **Real Excel Workbook Ingestion (`src/lib/parser.ts` & `/api/upload`):**
-  - Accepts `.xlsx`, `.xls`, and `.csv` files via Drag & Drop or file chooser.
-  - Parses multi-sheet Excel workbooks matching user format (`Followup Tracker` for bills/invoices, `Party Summary` for customer contacts).
-  - Handles multiple invoices and multiple contact numbers/emails per customer.
-  - Automatically calculates aging buckets, days overdue, and priority.
-  - Only stores real imported data in PostgreSQL (no fake mock customers).
+- **Real Excel Workbook & Daily SAP ALV Ingestion (`src/lib/parser.ts`, `src/lib/diff-engine.ts` & `/api/upload`):**
+  - Accepts `.xlsx`, `.xls` (including SAP ALV HTML table exports), and `.csv` via drag & drop or file selection.
+  - **Filename-Agnostic Structure Detection:** Distinguishes SAP Dues exports from Customer Contact sheets by inspecting column headers (`bill no`, `outstanding`, `contact person`, `company name`).
+  - **Multi-Contact & Semicolon Delimiter Unpacking:** Parses real-world spreadsheets where cells have multiple names, phones, or emails delimited by semicolons (e.g. `Smit Satpute ; Vinod Kale`, `89560 81914;70309 40425`, `sumit.satpute@parason.com; vinod.kale@parason.com`). Automatically creates individual primary/secondary `CustomerContact` profiles.
+  - **Smart Two-Way Customer Join:** Matches by `Ledger Code` when present, with fallback normalized prefix matching on `Company Name` / `Party Name`. If contacts are uploaded before SAP dues, creates a placeholder customer that seamlessly updates to the official SAP ledger code when dues are imported.
+  - **Missing Contacts Detection:** Automatically flags companies that have no contact phone or email (e.g. `OSHIYA METALS PRIVATE LIMITED`) so teams can take action.
+  - **Daily SAP ALV Diff Reconciliation:** Categorizes daily imported bills against the database: `[NEW TODAY]`, `[PERSISTENT / SAME]`, `[PARTIAL PAYMENT DETECTED]`, and `[SETTLED IN SAP]`.
+  - **Promise-to-Pay (PTP):** Automatically records customer installment commitments (e.g. ₹5,000 paid, ₹5,000 promised next week) and pauses reminders until the committed date.
+  - **Per-Customer Daily Digest Messaging:** Consolidates all open bills for a customer into 1 single message per channel per day (`{bills_list}` sorted by days overdue), with run-lock mutex and daily idempotency.
 
 - **Clear Column Separation:**
   - Replaced the confusing combined "Paid/Remaining" column with 3 clear, distinct columns:

@@ -12,18 +12,23 @@ import {
   Send, 
   CreditCard, 
   ShieldAlert, 
-  TrendingUp,
-  FileSpreadsheet,
-  Sparkles,
-  Check,
-  Building,
-  Phone,
-  Mail,
-  FileUp
+  TrendingUp, 
+  FileSpreadsheet, 
+  Sparkles, 
+  Check, 
+  Building, 
+  Phone, 
+  Mail, 
+  FileUp, 
+  Layers, 
+  CalendarClock, 
+  BadgeCheck 
 } from 'lucide-react';
 
 export default function DashboardPage() {
+  const [tenant, setTenant] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
+  const [latestBatch, setLatestBatch] = useState<any>(null);
   const [criticalDues, setCriticalDues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningAutoCheck, setRunningAutoCheck] = useState(false);
@@ -50,7 +55,9 @@ export default function DashboardPage() {
       const res = await fetch('/api/dues');
       const data = await res.json();
       if (data.success) {
+        setTenant(data.tenant);
         setStats(data.stats);
+        setLatestBatch(data.latestBatch);
         const critical = (data.invoices || []).filter(
           (d: any) => d.customer.isFlagged || d.daysOverdue > 0 || d.agingBucket !== 'Not Yet Due'
         );
@@ -118,15 +125,13 @@ export default function DashboardPage() {
 
       const data = await res.json();
       if (data.success) {
-        setUploadMsg(
-          `Import successful! Created ${data.stats.customersCreated} customers, ${data.stats.invoicesCreated} invoices, and ₹${data.stats.totalImportedOutstanding.toLocaleString('en-IN')} outstanding.`
-        );
+        setUploadMsg(data.message || 'Import successful!');
         setTimeout(() => {
           setShowUploadModal(false);
           setSelectedFile(null);
           setUploadMsg(null);
           fetchDashboardData();
-        }, 1800);
+        }, 2000);
       } else {
         setUploadMsg(data.error || 'Failed to import file');
       }
@@ -146,7 +151,7 @@ export default function DashboardPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: selectedInvoice.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
+          customerName: (selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName).trim(),
           contactPerson: contact?.personName || 'Sir / Madam',
           billNo: selectedInvoice.billNo,
           outstandingAmount: selectedInvoice.outstandingAmount,
@@ -183,7 +188,6 @@ export default function DashboardPage() {
 
       const data = await res.json();
       if (data.success && data.results?.[0]?.actionUrl) {
-        // Open the test URL (WhatsApp/SMS/Email)
         window.open(data.results[0].actionUrl, '_blank');
         setShowRemindModal(false);
         fetchDashboardData();
@@ -215,42 +219,51 @@ export default function DashboardPage() {
 
   return (
     <main className="p-8 max-w-7xl mx-auto w-full space-y-8">
-      {/* Top Header */}
+      {/* Top Header with Dynamic White-Label Tenant Branding */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-6">
         <div>
-          <h2 className="text-2xl font-black tracking-tight text-slate-900 flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700">
+              Multi-Tenant Active
+            </span>
+            <span className="text-xs text-slate-400">•</span>
+            <span className="text-xs font-semibold text-slate-600">
+              {tenant?.companyName || 'Abhiyadna Machine Tools'}
+            </span>
+          </div>
+          <h2 className="text-2xl font-black tracking-tight text-slate-900 mt-1 flex items-center gap-2">
             Receivables & Reminder Overview
           </h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Real-time aging analysis, automated multi-channel cadences, Groq AI messaging, and defaulter tracking.
+          <p className="text-xs text-slate-500 mt-0.5">
+            Real-time aging analysis, daily SAP diff reconciliation, Promise-to-Pay commitments, and Groq AI messaging.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <button
             onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-50 shadow-sm transition"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition"
           >
             <Upload className="w-4 h-4 text-indigo-600" />
-            Import Excel (.xlsx / .csv)
+            Import SAP Dues / Contacts
           </button>
 
           <button
             onClick={handleRunAutoCheck}
             disabled={runningAutoCheck}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 shadow-sm transition disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 shadow-sm transition disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${runningAutoCheck ? 'animate-spin' : ''}`} />
-            {runningAutoCheck ? 'Checking Cadences...' : 'Run Auto Cadence Check'}
+            {runningAutoCheck ? 'Dispatching Digests...' : 'Run Daily Digest Check'}
           </button>
         </div>
       </div>
 
       {/* Auto-Check Notification Banner */}
       {autoCheckMsg && (
-        <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-sm flex items-center justify-between shadow-sm">
+        <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-medium flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-indigo-600" />
+            <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
             <span>{autoCheckMsg}</span>
           </div>
           <button onClick={() => setAutoCheckMsg(null)} className="text-xs font-bold text-indigo-600 hover:underline">
@@ -259,9 +272,52 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Daily SAP Import Diff Reconciliation Card (Yesterday vs. Today) */}
+      {latestBatch && (
+        <div className="bg-gradient-to-r from-slate-900 to-indigo-950 p-5 rounded-2xl text-white shadow-lg space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-indigo-400" />
+              <h3 className="font-bold text-sm">
+                Latest SAP Import Diff Reconciliation
+              </h3>
+            </div>
+            <div className="text-[11px] text-slate-400">
+              File: <span className="text-indigo-300 font-mono">{latestBatch.fileName}</span> • Ingested:{' '}
+              {new Date(latestBatch.importedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400">🆕 New Today</div>
+              <div className="text-xl font-black text-white mt-1">{latestBatch.newEntriesCount}</div>
+              <p className="text-[10px] text-slate-400 mt-0.5">Bills added to recovery</p>
+            </div>
+
+            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">🔄 Persistent</div>
+              <div className="text-xl font-black text-white mt-1">{latestBatch.sameEntriesCount}</div>
+              <p className="text-[10px] text-slate-400 mt-0.5">Unchanged open balances</p>
+            </div>
+
+            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">📉 Partial Payments</div>
+              <div className="text-xl font-black text-white mt-1">{latestBatch.partialPaymentsCount}</div>
+              <p className="text-[10px] text-slate-400 mt-0.5">Auto-detected reductions</p>
+            </div>
+
+            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">✅ Settled in SAP</div>
+              <div className="text-xl font-black text-white mt-1">{latestBatch.settledEntriesCount}</div>
+              <p className="text-[10px] text-slate-400 mt-0.5">Cleared & closed accounts</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {/* Total Receivables */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between text-slate-500 text-xs font-semibold uppercase tracking-wider">
             <span>Total Receivables</span>
@@ -271,11 +327,10 @@ export default function DashboardPage() {
             ₹{stats ? stats.totalReceivables.toLocaleString('en-IN') : '0'}
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Total active outstanding dues from Excel
+            Active Dr balance across trade customers
           </p>
         </div>
 
-        {/* Total Overdue */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between text-rose-600 text-xs font-semibold uppercase tracking-wider">
             <span>Total Overdue</span>
@@ -289,7 +344,6 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* Flagged Chronic Defaulters */}
         <div className="bg-white p-5 rounded-2xl border border-rose-200 bg-rose-50/40 shadow-sm">
           <div className="flex items-center justify-between text-rose-700 text-xs font-semibold uppercase tracking-wider">
             <span>Defaulters Flagged</span>
@@ -303,7 +357,6 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* Due Today & Upcoming */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between text-amber-600 text-xs font-semibold uppercase tracking-wider">
             <span>Due Today / Soon</span>
@@ -326,7 +379,7 @@ export default function DashboardPage() {
               Priority Receivables & Overdue Watchlist
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Bills requiring immediate payment follow-up or status action.
+              Bills requiring payment follow-up or with active Promise-to-Pay commitments.
             </p>
           </div>
           <Link
@@ -341,12 +394,12 @@ export default function DashboardPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold border-b border-slate-200">
               <tr>
-                <th className="py-3 px-6">Customer & Contact</th>
+                <th className="py-3 px-6">Customer & Contacts</th>
                 <th className="py-3 px-6">Bill No & Date</th>
                 <th className="py-3 px-6">Bill Amount</th>
                 <th className="py-3 px-6">Paid / Adjusted</th>
-                <th className="py-3 px-6">Outstanding Due</th>
-                <th className="py-3 px-6">Due Date & Aging</th>
+                <th className="py-3 px-6 text-rose-600">Outstanding Due</th>
+                <th className="py-3 px-6">Due Date & Commitment</th>
                 <th className="py-3 px-6">Status</th>
                 <th className="py-3 px-6 text-right">Actions</th>
               </tr>
@@ -365,14 +418,14 @@ export default function DashboardPage() {
                       </div>
                       <h4 className="text-base font-bold text-slate-900">No Excel Data Imported Yet</h4>
                       <p className="text-xs text-slate-500 leading-relaxed">
-                        Upload your real Receivables Excel file (.xlsx / .csv) to view customer dues, multiple invoices, contact directories, and trigger automated reminders.
+                        Upload your SAP Outstanding Receivable export or Customer Contact sheet to start tracking dues, managing multiple invoices, and running digest reminders.
                       </p>
                       <button
                         onClick={() => setShowUploadModal(true)}
                         className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-xs shadow-md hover:bg-indigo-700 transition"
                       >
                         <Upload className="w-4 h-4" />
-                        Import Excel File Now
+                        Import SAP Dues / Contacts
                       </button>
                     </div>
                   </td>
@@ -386,12 +439,14 @@ export default function DashboardPage() {
               ) : (
                 criticalDues.map((inv: any) => {
                   const contact = inv.customer.contacts?.[0];
+                  const commitment = inv.commitments && inv.commitments.length > 0 ? inv.commitments[0] : null;
+
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
                       {/* Customer */}
                       <td className="py-4 px-6 font-medium text-slate-900">
                         <div>
-                          <span>{inv.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim()}</span>
+                          <span className="font-bold">{inv.customer.partyName || inv.customer.rawLedgerName}</span>
                           {inv.customer.isFlagged && (
                             <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">
                               <ShieldAlert className="w-3 h-3" /> Flagged
@@ -428,7 +483,7 @@ export default function DashboardPage() {
                         </span>
                       </td>
 
-                      {/* Due Date & Aging */}
+                      {/* Due Date & Commitment */}
                       <td className="py-4 px-6">
                         <div className="text-xs font-medium text-slate-800">
                           {new Date(inv.dueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
@@ -436,12 +491,23 @@ export default function DashboardPage() {
                         <div className="text-[11px] font-semibold text-rose-600 mt-0.5">
                           {inv.daysOverdue > 0 ? `${inv.daysOverdue} days overdue` : 'Due soon'}
                         </div>
+
+                        {/* Promise to Pay Badge */}
+                        {commitment && (
+                          <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                            <CalendarClock className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span>
+                              Promised ₹{commitment.promisedAmount.toLocaleString('en-IN')} on{' '}
+                              {new Date(commitment.promisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                            </span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Status */}
                       <td className="py-4 px-6">
                         <span className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                          inv.status === 'Payment Received'
+                          inv.status === 'Payment Received' || inv.status === 'Closed'
                             ? 'bg-emerald-100 text-emerald-800'
                             : inv.status === 'Partially Paid'
                             ? 'bg-amber-100 text-amber-800'
@@ -504,7 +570,9 @@ export default function DashboardPage() {
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Customer:</span>
-                <span className="font-bold text-slate-900">{selectedInvoice.customer.rawLedgerName}</span>
+                <span className="font-bold text-slate-900">
+                  {selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Bill Number:</span>
@@ -625,14 +693,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Real Excel File Upload Modal */}
+      {/* Real Excel / SAP File Upload Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-indigo-600">
                 <FileSpreadsheet className="w-6 h-6" />
-                <h3 className="font-bold text-base text-slate-900">Import Excel Sheet</h3>
+                <h3 className="font-bold text-base text-slate-900">Import SAP Dues / Contacts</h3>
               </div>
               <button 
                 onClick={() => setShowUploadModal(false)}
@@ -643,11 +711,10 @@ export default function DashboardPage() {
             </div>
 
             <p className="text-xs text-slate-500 leading-relaxed">
-              Upload your receivables workbook (.xlsx, .xls, or .csv). The system reads bill-level rows, contacts, aging brackets, and links multiple invoices per customer.
+              Upload your daily SAP Outstanding Receivable export (ALV HTML / .xls / .xlsx / .csv) or Customer Contact sheet. Filenames are automatically detected by structure.
             </p>
 
             <form onSubmit={handleUploadSubmit} className="space-y-4">
-              {/* Drag and Drop Box */}
               <div
                 onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
                 onDragLeave={() => setIsDragOver(false)}
@@ -664,7 +731,7 @@ export default function DashboardPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".xlsx, .xls, .csv"
+                  accept=".xlsx, .xls, .csv, .html"
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -678,15 +745,15 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div>
-                    <p className="text-xs font-bold text-slate-700">Click to choose Excel file or drag & drop</p>
-                    <p className="text-[11px] text-slate-400 mt-1">Supports .xlsx, .xls, and .csv files</p>
+                    <p className="text-xs font-bold text-slate-700">Click to choose file or drag & drop</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Supports SAP ALV (.xls), Excel (.xlsx), and CSV files</p>
                   </div>
                 )}
               </div>
 
               {uploadMsg && (
                 <div className={`p-3.5 rounded-xl text-xs font-medium ${
-                  uploadMsg.includes('successful') 
+                  uploadMsg.includes('successful') || uploadMsg.includes('processed')
                     ? 'bg-emerald-50 border border-emerald-200 text-emerald-900' 
                     : 'bg-rose-50 border border-rose-200 text-rose-800'
                 }`}>
@@ -710,12 +777,12 @@ export default function DashboardPage() {
                   {uploading ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Parsing & Ingesting...</span>
+                      <span>Diffing & Reconciling...</span>
                     </>
                   ) : (
                     <>
                       <Upload className="w-3.5 h-3.5" />
-                      <span>Upload & Ingest to PostgreSQL</span>
+                      <span>Ingest & Reconcile with DB</span>
                     </>
                   )}
                 </button>
