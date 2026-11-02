@@ -188,12 +188,29 @@ export async function reconcileDailySapExport(
       } else {
         // C. SAME / PERSISTENT ENTRY
         sameEntriesCount++;
+
+        // 7-day Grace Period check for manually marked paid bills
+        let billStatus = existing.status;
+        let diffNotes = `Unchanged bill still pending. Aging updated: ${inv.daysOverdue} days overdue.`;
+
+        if (existing.manualOverride && existing.manualMarkedDate) {
+          const daysSinceMarked = Math.round((new Date().getTime() - new Date(existing.manualMarkedDate).getTime()) / 86400000);
+          if (daysSinceMarked <= 7) {
+            billStatus = 'Payment Received - Pending SAP Confirmation';
+            diffNotes = `Marked paid manually ${daysSinceMarked}d ago. In 7-day grace period awaiting SAP clearance. Reminders suppressed.`;
+          } else {
+            billStatus = 'Disputed / Grace Period Expired';
+            diffNotes = `Marked paid manually ${daysSinceMarked}d ago, but still open in SAP after 7-day grace period. Escalated to accounts.`;
+          }
+        }
+
         await prisma.invoice.update({
           where: { id: existing.id },
           data: {
             daysOverdue: inv.daysOverdue,
             agingBucket: inv.agingBucket,
             priority: inv.priority,
+            status: billStatus,
           },
         });
 
@@ -204,7 +221,7 @@ export async function reconcileDailySapExport(
           partyName: inv.partyName,
           previousBalance: oldBal,
           currentBalance: newBal,
-          notes: `Unchanged bill still pending. Aging updated: ${inv.daysOverdue} days overdue.`,
+          notes: diffNotes,
         });
       }
     }

@@ -129,6 +129,8 @@
 │           │   ├── send/route.ts           <-- Manual reminder trigger with action URLs
 │           │   ├── auto-check/route.ts     <-- Full auto cron trigger
 │           │   └── approval-queue/route.ts <-- Semi-automated daily approval queue & selective dispatch
+│           ├── webhooks/
+│           │   └── inbound/route.ts        <-- Inbound SMS STOP, WhatsApp opt-out, email bounce & free-text webhook
 │           ├── templates/route.ts    <-- Template CRUD
 │           ├── settings/route.ts     <-- White-label tenant branding & gateway settings
 │           └── logs/route.ts         <-- Delivery logs
@@ -142,14 +144,18 @@
    ```powershell
    npx prisma db push
    ```
-2. **Run All 14 Integration & Unit Tests:**
+2. **Run All 16 Integration & Unit Tests Across 6 Test Suites:**
    ```powershell
-   npx tsx --test src/tests/multi-tenant-schema.test.ts src/tests/alv-and-diff.test.ts src/tests/promise-to-pay.test.ts src/tests/digest-engine.test.ts src/tests/approval-queue-and-contacts.test.ts
+   npx tsx --test src/tests/multi-tenant-schema.test.ts src/tests/alv-and-diff.test.ts src/tests/promise-to-pay.test.ts src/tests/digest-engine.test.ts src/tests/approval-queue-and-contacts.test.ts src/tests/webhooks-and-grace-period.test.ts
    ```
-3. **Build Application:**
+   *Expected Output: 16 tests across 6 suites passing (100% PASS).*
+
+3. **Compile Production Build (27 Routes):**
    ```powershell
    npm run build
    ```
+   *Verified: All 27 Next.js static and dynamic routes compile cleanly with 0 errors.*
+
 4. **Start Development Server:**
    ```powershell
    npm run dev

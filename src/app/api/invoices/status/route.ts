@@ -50,6 +50,8 @@ export async function POST(req: NextRequest) {
         status,
         outstandingAmount: newOutstanding,
         adjustment: newAdjustment,
+        manualOverride: status === 'Payment Received',
+        manualMarkedDate: status === 'Payment Received' ? new Date() : null,
         narration: notes ? `${invoice.narration || ''} | ${notes}`.trim() : invoice.narration,
       },
     });
