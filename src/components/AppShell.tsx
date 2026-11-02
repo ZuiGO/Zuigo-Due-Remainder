@@ -10,10 +10,9 @@ import {
   MessageSquare, 
   Settings, 
   History, 
-  BellRing,
-  ShieldAlert,
   LogOut,
-  UserCheck
+  ArrowUpRight,
+  ExternalLink,
 } from 'lucide-react';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -67,18 +66,39 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="bg-slate-50 text-slate-900 font-sans antialiased min-h-screen flex w-full">
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col justify-between shrink-0 shadow-xl border-r border-slate-800">
+      {/* 
+        FIXED SIDEBAR:
+        Stays strictly pinned in place on the left (fixed left-0 top-0 bottom-0)
+        and does NOT scroll with the page.
+      */}
+      <aside className="w-64 bg-slate-900 text-white flex flex-col justify-between shrink-0 shadow-2xl border-r border-slate-800 fixed left-0 top-0 bottom-0 h-screen z-40 overflow-y-auto">
         <div>
-          {/* Brand Header */}
-          <div className="p-6 border-b border-slate-800 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/30">
-              <BellRing className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="font-bold text-lg leading-tight tracking-wide">Zuigo Remainder</h1>
-              <p className="text-xs text-indigo-300 font-medium">Abhiyadna Machine Tools</p>
-            </div>
+          {/* Top Left: Abhiyadna Machine Tools Logo (Click opens https://abhiyadnamt.com/) */}
+          <div className="p-4 border-b border-slate-800/90 bg-slate-950/40">
+            <a
+              href="https://abhiyadnamt.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Visit Abhiyadna Machine Tools (https://abhiyadnamt.com/)"
+              className="flex items-center gap-3 p-2 rounded-xl hover:bg-slate-800/80 transition group border border-transparent hover:border-slate-700/60"
+            >
+              <div className="w-12 h-12 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 shadow-md border border-slate-700/60 group-hover:border-indigo-400 group-hover:scale-105 transition-all">
+                <img
+                  src="/amt-logo.png"
+                  alt="Abhiyadna Machine Tools Logo"
+                  className="w-full h-full object-contain rounded-lg"
+                />
+              </div>
+              <div className="overflow-hidden">
+                <div className="font-extrabold text-xs text-white group-hover:text-indigo-300 transition tracking-tight leading-tight">
+                  Abhiyadna Machine Tools
+                </div>
+                <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5 font-mono">
+                  <span>abhiyadnamt.com</span>
+                  <ExternalLink className="w-2.5 h-2.5 text-indigo-400 shrink-0" />
+                </div>
+              </div>
+            </a>
           </div>
 
           {/* Navigation Links */}
@@ -147,42 +167,120 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               }`}
             >
               <Settings className="w-4 h-4 text-slate-400" />
-              Settings & API
+              Settings & Gateways
             </Link>
           </nav>
         </div>
 
-        {/* User Card & Logout */}
-        <div className="p-4 border-t border-slate-800 text-xs space-y-3">
+        {/* User Card, Zuigo White Branding & Logout */}
+        <div className="p-4 border-t border-slate-800 text-xs space-y-3 bg-slate-950/40">
           <div className="flex items-center justify-between bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60">
             <div className="flex items-center gap-2 overflow-hidden">
               <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shrink-0">
                 {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'Z'}
               </div>
               <div className="truncate">
-                <div className="font-bold text-white truncate">{currentUser?.name || 'zuigo'}</div>
+                <div className="font-bold text-white truncate">{currentUser?.name || 'Admin'}</div>
                 <div className="text-[11px] text-slate-400 truncate">{currentUser?.email || 'jayesh@zuigo.ai'}</div>
               </div>
             </div>
             <button
               onClick={handleLogout}
               title="Sign Out"
-              className="text-slate-400 hover:text-rose-400 p-1.5 rounded-lg hover:bg-slate-700/50 transition"
+              className="text-slate-400 hover:text-rose-400 p-1.5 rounded-lg hover:bg-slate-700/50 transition shrink-0"
             >
               <LogOut className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5 text-[11px] text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>PostgreSQL & Groq AI Active</span>
-          </div>
+          {/* Zuigo White Logo link in sidebar bottom */}
+          <a
+            href="https://zuigo.ai/"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Visit ZuiGO AI (https://zuigo.ai/)"
+            className="flex items-center justify-between p-2 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/40 transition group"
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="text-[11px] text-slate-400 group-hover:text-slate-200">Built by</span>
+            </div>
+            <img
+              src="/zuigo-logo-white.png"
+              alt="ZuiGO Logo"
+              className="h-4 w-auto object-contain opacity-90 group-hover:opacity-100 transition"
+            />
+          </a>
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {children}
+      {/* 
+        MAIN CONTENT AREA:
+        Offset with pl-64 so it cleanly clears the fixed sidebar.
+      */}
+      <div className="flex-1 flex flex-col min-w-0 pl-64 min-h-screen">
+        {/* 
+          TOP NAVIGATION HEADER:
+          Fixed/Sticky across all pages.
+          Top Right: ZuiGO Logo (Click opens https://zuigo.ai/)
+        */}
+        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-8 py-3 flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-3">
+            {/* Top Left Mini Pill for Abhiyadna */}
+            <a
+              href="https://abhiyadnamt.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Abhiyadna Machine Tools"
+              className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/80 transition border border-slate-200/60 text-xs font-semibold text-slate-800 group"
+            >
+              <img src="/amt-logo.png" alt="AMT" className="w-4 h-4 object-contain rounded" />
+              <span>Abhiyadna Machine Tools</span>
+              <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-indigo-600 transition" />
+            </a>
+            <span className="text-slate-300 hidden md:inline">•</span>
+            <span className="text-xs text-slate-500 font-medium hidden md:inline">
+              Payment Follow-up Automation
+            </span>
+          </div>
+
+          {/* Top Right: ZuiGO Logo linking to https://zuigo.ai/ */}
+          <div className="flex items-center gap-4">
+            <a
+              href="https://zuigo.ai/"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Powered by ZuiGO AI (https://zuigo.ai/)"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200/80 shadow-xs transition group"
+            >
+              <span className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 group-hover:text-indigo-600 transition hidden sm:inline">
+                Powered by
+              </span>
+              <img
+                src="/zuigo-logo.png"
+                alt="ZuiGO Logo"
+                className="h-6 w-auto object-contain transition-transform group-hover:scale-105"
+              />
+              <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 transition" />
+            </a>
+
+            {/* User Avatar */}
+            <div className="flex items-center gap-2 pl-3 border-l border-slate-200">
+              <div className="w-8 h-8 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
+                {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'Z'}
+              </div>
+              <div className="hidden lg:block text-left text-xs">
+                <div className="font-bold text-slate-800 leading-tight">{currentUser?.name || 'zuigo'}</div>
+                <div className="text-[10px] text-emerald-600 font-medium">Online</div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Page Content */}
+        <div className="flex-1">
+          {children}
+        </div>
       </div>
     </div>
   );
