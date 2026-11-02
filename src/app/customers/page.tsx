@@ -101,7 +101,7 @@ export default function CustomersPage() {
               <tr>
                 <th className="py-3 px-6">Company / Ledger</th>
                 <th className="py-3 px-6">Contact Directory</th>
-                <th className="py-3 px-6">Credit Days</th>
+                <th className="py-3 px-6">Invoices / Total Due</th>
                 <th className="py-3 px-6">Reminders Sent</th>
                 <th className="py-3 px-6">Standing</th>
                 <th className="py-3 px-6 text-right">Defaulter Action</th>
@@ -141,8 +141,9 @@ export default function CustomersPage() {
                         )}
                       </td>
 
-                      <td className="py-4 px-6 text-xs font-semibold text-slate-700">
-                        {c.defaultCreditDays} Days
+                      <td className="py-4 px-6 text-xs text-slate-700">
+                        <div className="font-bold text-rose-600">₹{(c.totalOutstanding || 0).toLocaleString('en-IN')}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">{c.invoices?.length || 0} invoice(s)</div>
                       </td>
 
                       <td className="py-4 px-6">

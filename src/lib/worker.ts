@@ -2,6 +2,7 @@ import prisma from './db';
 import { evaluateCadenceTrigger, DEFAULT_SCHEDULE } from './reminder-engine';
 import { renderTemplate } from './template-renderer';
 import type { TemplateVariables } from './template-renderer';
+import { generateSmartReminderWithGroq } from './groq';
 import { dispatchMessage } from './dispatchers';
 
 export interface AutomatedCheckSummary {
@@ -13,6 +14,7 @@ export interface AutomatedCheckSummary {
   details: {
     customerId: string;
     customerName: string;
+    billNo?: string;
     action: string;
     channel?: string;
     category?: string;
@@ -21,7 +23,7 @@ export interface AutomatedCheckSummary {
 
 /**
  * Executes the automated daily reminder check.
- * Identifies upcoming and overdue dues, evaluates customer schedules,
+ * Identifies upcoming, due today, and overdue invoices, evaluates schedules,
  * dispatches notifications across configured channels,
  * and auto-flags customers reaching 4-5 unanswered reminders.
  */
@@ -36,11 +38,6 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
   };
 
   // 1. Fetch Global Settings & Active Channels
-  const integrationSettings = await prisma.integrationSetting.findMany({
-    where: { isEnabled: true },
-  });
-  const enabledChannelTypes = new Set(integrationSettings.map(i => i.providerType));
-
   const globalScheduleRecord = await prisma.reminderSchedule.findFirst({
     where: { customerId: null },
   });
@@ -55,10 +52,11 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
       }
     : DEFAULT_SCHEDULE;
 
-  // 2. Fetch all pending dues
-  const dues = await prisma.due.findMany({
+  // 2. Fetch all unpaid invoices
+  const invoices = await prisma.invoice.findMany({
     where: {
-      remainingBalance: { gt: 0 },
+      outstandingAmount: { gt: 0 },
+      status: { not: 'Payment Received' },
       customer: {
         status: { not: 'EXCLUDED' },
       },
@@ -73,10 +71,10 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
     },
   });
 
-  summary.totalChecked = dues.length;
+  summary.totalChecked = invoices.length;
 
-  for (const due of dues) {
-    const customer = due.customer;
+  for (const invoice of invoices) {
+    const customer = invoice.customer;
 
     // A. Check if customer exceeded threshold and must be flagged
     if (customer.consecutiveRemindersCount >= defaultCadence.maxRemindersBeforeFlag) {
@@ -87,13 +85,14 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
             isFlagged: true,
             status: 'FLAGGED',
             flaggedAt: new Date(),
-            flagReason: `Auto-flagged: Unpaid balance (₹${due.remainingBalance.toLocaleString('en-IN')}) after ${customer.consecutiveRemindersCount} unresponded reminders.`,
+            flagReason: `Auto-flagged: Unpaid balance (₹${customer.totalOutstanding.toLocaleString('en-IN')}) after ${customer.consecutiveRemindersCount} unresponded reminders.`,
           },
         });
         summary.flaggedCount++;
         summary.details.push({
           customerId: customer.id,
           customerName: customer.rawLedgerName,
+          billNo: invoice.billNo,
           action: 'FLAGGED_AS_DEFAULTER',
         });
       } else {
@@ -116,10 +115,10 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
 
     // C. Evaluate cadence trigger for today
     const cadence = evaluateCadenceTrigger(
-      new Date(due.dueDate),
+      new Date(invoice.dueDate),
       customer.consecutiveRemindersCount,
       customer.isFlagged,
-      due.remainingBalance,
+      invoice.outstandingAmount,
       customerSchedule,
       new Date()
     );
@@ -129,35 +128,34 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
       continue;
     }
 
-    // D. Fetch template for category
+    // D. Build reminder payload
     const templateCategory = cadence.category;
     const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
+
+    const formattedDueDate = new Date(invoice.dueDate).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const daysOverdue = Math.round((Date.now() - new Date(invoice.dueDate).getTime()) / (1000 * 60 * 60 * 24));
 
     const templateVariables: TemplateVariables = {
       customer_name: customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
       contact_person: primaryContact?.personName || 'Sir / Madam',
-      due_amount: due.remainingBalance,
-      remaining_balance: due.remainingBalance,
-      due_date: new Date(due.dueDate).toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      }),
-      days_overdue: Math.max(
-        0,
-        Math.round((Date.now() - new Date(due.dueDate).getTime()) / (1000 * 60 * 60 * 24))
-      ),
+      due_amount: invoice.outstandingAmount,
+      remaining_balance: invoice.outstandingAmount,
+      due_date: formattedDueDate,
+      days_overdue: Math.max(0, daysOverdue),
       company_name: 'Abhiyadna Machine Tools',
       company_bank_details: 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234',
     };
 
-    // E. Dispatch across enabled channels
+    // Channels to dispatch across
     const channelsToDispatch: ('WHATSAPP' | 'SMS' | 'EMAIL')[] = ['WHATSAPP', 'SMS', 'EMAIL'];
-
     let anyDispatched = false;
 
     for (const ch of channelsToDispatch) {
-      // Check if channel is enabled (or fallback to simulator if testing)
       const recipient = ch === 'EMAIL' ? primaryContact?.emailId : primaryContact?.mobileNumber;
       if (!recipient) continue;
 
@@ -168,13 +166,11 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
 
       const messageContent = template
         ? renderTemplate(template.templateBody, templateVariables)
-        : `Payment reminder for ₹${due.remainingBalance} due on ${templateVariables.due_date}`;
+        : `Payment reminder: Invoice ${invoice.billNo} for ₹${invoice.outstandingAmount.toLocaleString('en-IN')} due on ${templateVariables.due_date}.`;
 
-      const subject = template?.subject
-        ? renderTemplate(template.subject, templateVariables)
-        : `Due Payment Reminder - Abhiyadna Machine Tools`;
+      const subject = `Payment Reminder: Bill ${invoice.billNo} - Abhiyadna Machine Tools`;
 
-      // Dispatch
+      // Dispatch via simulator or active gateway
       const dispatchResult = await dispatchMessage({
         channel: ch,
         recipient,
@@ -187,7 +183,7 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
       await prisma.reminderLog.create({
         data: {
           customerId: customer.id,
-          dueId: due.id,
+          invoiceId: invoice.id,
           templateId: template?.id || null,
           channel: ch,
           triggerType: 'AUTOMATIC',
@@ -204,6 +200,7 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
       summary.details.push({
         customerId: customer.id,
         customerName: customer.rawLedgerName,
+        billNo: invoice.billNo,
         action: 'REMINDER_DISPATCHED',
         channel: ch,
         category: templateCategory,
@@ -224,6 +221,13 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
           flagReason: shouldNowFlag
             ? `Auto-flagged: Unpaid after ${updatedCount} consecutive reminders.`
             : customer.flagReason,
+        },
+      });
+
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          lastFollowUpDate: new Date(),
         },
       });
 

@@ -7,21 +7,35 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("ADMIN") // ADMIN | MANAGER | VIEWER
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model Customer {
   id                        String              @id @default(cuid())
   rawLedgerName             String
   normalizedName            String              @unique
-  status                    String              @default("ACTIVE") // ACTIVE | FLAGGED | EXCLUDED
-  consecutiveRemindersCount Int                 @default(0)
+  station                   String?
+  branchName                String?
+  branchCode                String?
+  status                    String              @default("ACTIVE") // ACTIVE | FLAGGED | SETTLED | EXCLUDED
   isFlagged                 Boolean             @default(false)
   flaggedAt                 DateTime?
   flagReason                String?
-  defaultCreditDays         Int                 @default(30)
+  consecutiveRemindersCount Int                 @default(0)
+  overallPriority           String              @default("Medium") // High | Medium | Low
+  totalOutstanding          Float               @default(0)
   createdAt                 DateTime            @default(now())
   updatedAt                 DateTime            @updatedAt
 
   contacts                  CustomerContact[]
-  dues                      Due[]
+  invoices                  Invoice[]
   reminderSchedules         ReminderSchedule[]
   reminderLogs              ReminderLog[]
 }
@@ -32,56 +46,66 @@ model CustomerContact {
   customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   personName      String?
   mobileNumber    String?
+  mobileNumber2   String?
+  mobileNumber3   String?
+  mobileNumber4   String?
   emailId         String?
+  emailId2        String?
+  emailId3        String?
+  emailId4        String?
   isPrimary       Boolean   @default(true)
   createdAt       DateTime  @default(now())
 }
 
-model Due {
-  id                  String           @id @default(cuid())
-  customerId          String
-  customer            Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  originalBalance     Float
-  remainingBalance    Float
-  totalPaid           Float            @default(0)
-  balanceType         String           @default("Dr") // Dr (Debit = Due) | Cr (Credit = Advance)
-  dueDate             DateTime
-  status              String           @default("UPCOMING") // UPCOMING | DUE_TODAY | PARTIALLY_PAID | OVERDUE | SETTLED
-  importBatchId       String?
-  lastImportedAt      DateTime         @default(now())
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+model Invoice {
+  id                 String           @id @default(cuid())
+  customerId         String
+  customer           Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  billNo             String
+  billDate           DateTime
+  dueDate            DateTime
+  billAmount         Float
+  adjustment         Float            @default(0)
+  outstandingAmount  Float
+  daysOverdue        Int              @default(0)
+  agingBucket        String           @default("Not Yet Due") // Not Yet Due | 1-30 Days | 31-60 Days | 61-90 Days | 90+ Days
+  actionType         String           @default("Follow-up Required") // Follow-up Required | Credit Balance - No Action
+  priority           String           @default("Medium") // High | Medium | Low
+  followUpChannel    String           @default("Email + SMS")
+  remainderFrequency String?
+  status             String           @default("Pending") // Pending | Payment Received | Partially Paid | Promise to Pay | Disputed | Escalated | Legal Notice
+  narration          String?
+  lastFollowUpDate   DateTime?
+  nextFollowUpDate   DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
-  installments        Installment[]
-  paymentRecords      PaymentRecord[]
-  reminderLogs        ReminderLog[]
+  payments           PaymentRecord[]
+  installments       Installment[]
+  reminderLogs       ReminderLog[]
 }
 
 model Installment {
-  id                String    @id @default(cuid())
-  dueId             String
-  due               Due       @relation(fields: [dueId], references: [id], onDelete: Cascade)
+  id                String   @id @default(cuid())
+  invoiceId         String
+  invoice           Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   installmentNumber Int
   amount            Float
-  paidAmount        Float     @default(0)
   dueDate           DateTime
-  status            String    @default("PENDING") // PENDING | PARTIAL | PAID | OVERDUE
-  notes             String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  status            String   @default("PENDING") // PENDING | PAID
+  createdAt         DateTime @default(now())
 }
 
 model PaymentRecord {
-  id                  String    @id @default(cuid())
-  dueId               String
-  due                 Due       @relation(fields: [dueId], references: [id], onDelete: Cascade)
-  amountPaid          Float
-  paymentDate         DateTime  @default(now())
-  paymentMode         String    @default("BANK_TRANSFER") // UPI | NEFT_RTGS | CHEQUE | CASH | EXCEL_RECONCILED
-  referenceNumber     String?   // UTR / Cheque No
-  nextInstallmentDate DateTime?
-  notes               String?
-  createdAt           DateTime  @default(now())
+  id              String    @id @default(cuid())
+  invoiceId       String?
+  invoice         Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amountPaid      Float
+  paymentDate     DateTime  @default(now())
+  paymentMode     String    @default("BANK_TRANSFER") // UPI | NEFT_RTGS | CHEQUE | CASH | EXCEL_IMPORT
+  referenceNumber String?   // UTR / Cheque No
+  notes           String?
+  createdAt       DateTime  @default(now())
 }
 
 model ReminderSchedule {
@@ -95,6 +119,7 @@ model ReminderSchedule {
   reminder5DaysAfter     Int       @default(15)
   maxRemindersBeforeFlag Int       @default(5)
   channels               String    @default("WHATSAPP,SMS,EMAIL")
+  autoReminderEnabled    Boolean   @default(true)
   isActive               Boolean   @default(true)
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
@@ -104,7 +129,7 @@ model MessageTemplate {
   id           String        @id @default(cuid())
   channel      String        // WHATSAPP | SMS | EMAIL
   name         String
-  category     String        // GENTLE | ON_DUE | OVERDUE | URGENT | FINAL_NOTICE | PAYMENT_RECEIPT
+  category     String        // GENTLE | ON_DUE | OVERDUE | URGENT | FINAL_NOTICE | PAYMENT_RECEIPT | AI_CUSTOM
   subject      String?       // Used for emails
   templateBody String
   isDefault    Boolean       @default(false)
@@ -116,10 +141,10 @@ model MessageTemplate {
 
 model IntegrationSetting {
   id           String   @id @default(cuid())
-  providerType String   // WHATSAPP | SMS | EMAIL
-  providerName String   // META_CLOUD_API | TWILIO | MSG91 | SMTP | RESEND | SIMULATOR
-  configJson   String   // JSON payload with encrypted/plain credentials
-  isEnabled    Boolean  @default(false)
+  providerType String   // WHATSAPP | SMS | EMAIL | GROQ_AI
+  providerName String   // META_CLOUD_API | TWILIO | MSG91 | SMTP | GROQ | SIMULATOR
+  configJson   String   // JSON payload with credentials
+  isEnabled    Boolean  @default(true)
   isSandbox    Boolean  @default(true)
   updatedAt    DateTime @updatedAt
 }
@@ -128,8 +153,8 @@ model ReminderLog {
   id                 String           @id @default(cuid())
   customerId         String
   customer           Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  dueId              String?
-  due                Due?             @relation(fields: [dueId], references: [id], onDelete: SetNull)
+  invoiceId          String?
+  invoice            Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   templateId         String?
   template           MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   channel            String           // WHATSAPP | SMS | EMAIL

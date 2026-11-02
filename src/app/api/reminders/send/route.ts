@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { renderTemplate } from '@/lib/template-renderer';
+import { generateSmartReminderWithGroq } from '@/lib/groq';
 import { 
   dispatchMessage, 
-  buildChannelActionUrl, 
   OVERRIDE_TARGET_PHONE, 
   OVERRIDE_TARGET_EMAIL 
 } from '@/lib/dispatchers';
@@ -11,10 +11,13 @@ import {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { dueIds = [], channel = 'WHATSAPP', templateId, customMessage } = body;
+    // Accept either invoiceIds or legacy dueIds
+    const invoiceIds = body.invoiceIds || body.dueIds || [];
+    const channel = (body.channel || 'WHATSAPP').toUpperCase() as 'WHATSAPP' | 'SMS' | 'EMAIL';
+    const { templateId, customMessage, useGroq = false } = body;
 
-    if (!Array.isArray(dueIds) || dueIds.length === 0) {
-      return NextResponse.json({ error: 'At least one dueId is required' }, { status: 400 });
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+      return NextResponse.json({ error: 'At least one invoiceId or dueId is required' }, { status: 400 });
     }
 
     const template = templateId
@@ -23,8 +26,8 @@ export async function POST(req: NextRequest) {
           where: { channel, category: 'OVERDUE' },
         });
 
-    const dues = await prisma.due.findMany({
-      where: { id: { in: dueIds } },
+    const invoices = await prisma.invoice.findMany({
+      where: { id: { in: invoiceIds } },
       include: {
         customer: {
           include: { contacts: true },
@@ -32,41 +35,62 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    if (invoices.length === 0) {
+      return NextResponse.json({ error: 'No matching invoices found' }, { status: 404 });
+    }
+
     const results = [];
 
-    for (const due of dues) {
-      const customer = due.customer;
+    for (const invoice of invoices) {
+      const customer = invoice.customer;
       const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
 
+      // Forced test routing as requested by user
       const effectiveRecipient = channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE;
 
-      const vars = {
-        customer_name: customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
-        contact_person: primaryContact?.personName || 'Sir / Madam',
-        due_amount: due.remainingBalance,
-        remaining_balance: due.remainingBalance,
-        due_date: new Date(due.dueDate).toLocaleDateString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-        }),
-        days_overdue: Math.max(
-          0,
-          Math.round((Date.now() - new Date(due.dueDate).getTime()) / (1000 * 60 * 60 * 24))
-        ),
-        company_name: 'Abhiyadna Machine Tools',
-        company_bank_details: 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234',
-      };
+      const formattedDueDate = new Date(invoice.dueDate).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
 
-      const messageContent = customMessage
-        ? renderTemplate(customMessage, vars)
-        : template
-        ? renderTemplate(template.templateBody, vars)
-        : `Payment Reminder: ₹${due.remainingBalance} is pending for ${vars.customer_name}. Please clear your due.`;
+      const daysOverdue = Math.round((Date.now() - new Date(invoice.dueDate).getTime()) / (1000 * 60 * 60 * 24));
 
-      const subject = template?.subject
-        ? renderTemplate(template.subject, vars)
-        : `Payment Due Reminder - Abhiyadna Machine Tools`;
+      let messageContent = '';
+
+      if (customMessage && customMessage.trim().length > 0) {
+        messageContent = customMessage;
+      } else if (useGroq) {
+        // AI Generated reminder
+        messageContent = await generateSmartReminderWithGroq({
+          customerName: customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
+          contactPerson: primaryContact?.personName || 'Sir / Madam',
+          billNo: invoice.billNo,
+          outstandingAmount: invoice.outstandingAmount,
+          dueDate: formattedDueDate,
+          daysOverdue,
+          agingBucket: invoice.agingBucket,
+          priority: invoice.priority,
+          channel,
+        });
+      } else {
+        const vars = {
+          customer_name: customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
+          contact_person: primaryContact?.personName || 'Sir / Madam',
+          due_amount: invoice.outstandingAmount,
+          remaining_balance: invoice.outstandingAmount,
+          due_date: formattedDueDate,
+          days_overdue: Math.max(0, daysOverdue),
+          company_name: 'Abhiyadna Machine Tools',
+          company_bank_details: 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234',
+        };
+
+        messageContent = template
+          ? renderTemplate(template.templateBody, vars)
+          : `Payment Reminder: ₹${invoice.outstandingAmount.toLocaleString('en-IN')} is outstanding for Bill ${invoice.billNo} from ${vars.customer_name}. Please clear your balance.`;
+      }
+
+      const subject = `Payment Reminder: Bill ${invoice.billNo} - Abhiyadna Machine Tools`;
 
       const dispatchResult = await dispatchMessage({
         channel,
@@ -80,7 +104,7 @@ export async function POST(req: NextRequest) {
       await prisma.reminderLog.create({
         data: {
           customerId: customer.id,
-          dueId: due.id,
+          invoiceId: invoice.id,
           templateId: template?.id || null,
           channel,
           triggerType: 'MANUAL',
@@ -92,7 +116,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Increment count
+      // Increment customer's reminder counter and flag if >= 5
       const updatedCount = customer.consecutiveRemindersCount + 1;
       const shouldFlag = updatedCount >= 5;
 
@@ -109,8 +133,17 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // Update invoice last follow-up
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          lastFollowUpDate: new Date(),
+        },
+      });
+
       results.push({
-        dueId: due.id,
+        invoiceId: invoice.id,
+        billNo: invoice.billNo,
         customer: customer.rawLedgerName,
         recipient: effectiveRecipient,
         channel,
@@ -124,7 +157,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Dispatched to ${results.length} customer(s). Direct links generated for ${channel}.`,
+      message: `Dispatched reminder for ${results.length} bill(s). Direct opening links ready for ${channel}.`,
       results,
     });
   } catch (error: any) {

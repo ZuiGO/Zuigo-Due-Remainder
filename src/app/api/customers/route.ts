@@ -9,13 +9,17 @@ export async function GET(req: NextRequest) {
       },
       include: {
         contacts: true,
-        dues: true,
+        invoices: {
+          orderBy: { dueDate: 'asc' },
+        },
+        reminderSchedules: true,
       },
       orderBy: { rawLedgerName: 'asc' },
     });
 
     return NextResponse.json({ success: true, customers });
   } catch (error: any) {
+    console.error('Fetch Customers error:', error);
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
   }
 }
@@ -42,6 +46,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, customer: updated });
   } catch (error: any) {
+    console.error('Update Customer error:', error);
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
   }
 }

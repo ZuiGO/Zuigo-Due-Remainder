@@ -1,32 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { calculatePaymentApplication } from '@/lib/payment-engine';
 import { renderTemplate } from '@/lib/template-renderer';
 import { dispatchMessage } from '@/lib/dispatchers';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const invoiceId = body.invoiceId || body.dueId;
     const {
-      dueId,
       amountPaid,
       paymentDate = new Date(),
       paymentMode = 'BANK_TRANSFER',
       referenceNumber,
-      nextInstallmentDate,
       notes,
       sendReceipt = true,
     } = body;
 
-    if (!dueId || !amountPaid || amountPaid <= 0) {
+    if (!invoiceId || !amountPaid || Number(amountPaid) <= 0) {
       return NextResponse.json(
-        { error: 'Valid dueId and amountPaid are required' },
+        { error: 'Valid invoiceId and amountPaid are required' },
         { status: 400 }
       );
     }
 
-    const due = await prisma.due.findUnique({
-      where: { id: dueId },
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
       include: {
         customer: {
           include: { contacts: true },
@@ -34,70 +32,70 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (!due) {
-      return NextResponse.json({ error: 'Due record not found' }, { status: 404 });
+    if (!invoice) {
+      return NextResponse.json({ error: 'Invoice record not found' }, { status: 404 });
     }
 
-    // 1. Calculate balance update
-    const result = calculatePaymentApplication(
-      due.remainingBalance,
-      due.totalPaid,
-      Number(amountPaid)
-    );
+    const payVal = Number(amountPaid);
+    const newOutstanding = Math.max(0, invoice.outstandingAmount - payVal);
+    const newAdjustment = invoice.adjustment + payVal;
+    const isSettled = newOutstanding === 0;
+    const newStatus = isSettled ? 'Payment Received' : 'Partially Paid';
 
-    // 2. Create Payment Record
+    // 1. Create Payment Record
     const paymentRecord = await prisma.paymentRecord.create({
       data: {
-        dueId: due.id,
-        amountPaid: Number(amountPaid),
+        invoiceId: invoice.id,
+        amountPaid: payVal,
         paymentDate: new Date(paymentDate),
         paymentMode,
         referenceNumber: referenceNumber || null,
-        nextInstallmentDate: nextInstallmentDate ? new Date(nextInstallmentDate) : null,
         notes: notes || null,
       },
     });
 
-    // 3. Update Due
-    const updatedDue = await prisma.due.update({
-      where: { id: due.id },
+    // 2. Update Invoice
+    const updatedInvoice = await prisma.invoice.update({
+      where: { id: invoice.id },
       data: {
-        remainingBalance: result.newRemainingBalance,
-        totalPaid: result.newTotalPaid,
-        status: result.status,
-        dueDate: nextInstallmentDate ? new Date(nextInstallmentDate) : due.dueDate,
+        outstandingAmount: newOutstanding,
+        adjustment: newAdjustment,
+        status: newStatus,
       },
     });
 
-    // 4. Reset customer aggressive reminder count and unflag if settled
+    // 3. Recalculate customer's total outstanding balance
+    const customerInvoices = await prisma.invoice.findMany({
+      where: { customerId: invoice.customerId },
+    });
+    const totalRemaining = customerInvoices.reduce((sum, inv) => sum + (inv.id === invoice.id ? newOutstanding : inv.outstandingAmount), 0);
+
     await prisma.customer.update({
-      where: { id: due.customer.id },
+      where: { id: invoice.customer.id },
       data: {
+        totalOutstanding: totalRemaining,
         consecutiveRemindersCount: 0,
-        isFlagged: result.isSettled ? false : due.customer.isFlagged,
-        status: result.isSettled ? 'ACTIVE' : due.customer.status,
+        isFlagged: totalRemaining === 0 ? false : invoice.customer.isFlagged,
+        status: totalRemaining === 0 ? 'ACTIVE' : invoice.customer.status,
       },
     });
 
-    // 5. Optionally dispatch Payment Receipt message
+    // 4. Optionally dispatch receipt
     let receiptSent = false;
     if (sendReceipt) {
-      const primaryContact = due.customer.contacts.find(c => c.isPrimary) || due.customer.contacts[0];
+      const primaryContact = invoice.customer.contacts.find(c => c.isPrimary) || invoice.customer.contacts[0];
       if (primaryContact?.mobileNumber || primaryContact?.emailId) {
-        // Find receipt template
         const receiptTemplate = await prisma.messageTemplate.findFirst({
           where: { category: 'PAYMENT_RECEIPT' },
         });
 
         if (receiptTemplate) {
           const vars = {
-            customer_name: due.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
+            customer_name: invoice.customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
             contact_person: primaryContact?.personName || 'Sir / Madam',
-            last_payment_amount: Number(amountPaid),
-            remaining_balance: result.newRemainingBalance,
-            next_installment_date: nextInstallmentDate
-              ? new Date(nextInstallmentDate).toLocaleDateString('en-IN')
-              : 'Cleared / None',
+            last_payment_amount: payVal,
+            remaining_balance: newOutstanding,
+            next_installment_date: isSettled ? 'Cleared' : 'As per schedule',
             company_name: 'Abhiyadna Machine Tools',
           };
 
@@ -114,8 +112,8 @@ export async function POST(req: NextRequest) {
 
           await prisma.reminderLog.create({
             data: {
-              customerId: due.customer.id,
-              dueId: due.id,
+              customerId: invoice.customer.id,
+              invoiceId: invoice.id,
               templateId: receiptTemplate.id,
               channel,
               triggerType: 'MANUAL',
@@ -131,11 +129,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: result.isSettled
-        ? 'Full payment received. Account marked as Settled!'
-        : `Partial payment of ₹${amountPaid} recorded. Remaining balance: ₹${result.newRemainingBalance}`,
+      message: isSettled
+        ? `Full payment of ₹${payVal.toLocaleString('en-IN')} received for Bill ${invoice.billNo}. Marked as Settled!`
+        : `Partial payment of ₹${payVal.toLocaleString('en-IN')} recorded for Bill ${invoice.billNo}. Remaining balance: ₹${newOutstanding.toLocaleString('en-IN')}`,
       paymentRecord,
-      updatedDue,
+      updatedInvoice,
       receiptSent,
     });
   } catch (error: any) {

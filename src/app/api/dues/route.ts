@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { categorizeDue } from '@/lib/reminder-engine';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get('filter') || 'ALL'; // ALL | UPCOMING | DUE_TODAY | OVERDUE | FLAGGED | SETTLED
     const search = searchParams.get('search') || '';
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
     const whereClause: any = {
       customer: {
@@ -15,27 +20,37 @@ export async function GET(req: NextRequest) {
     };
 
     if (search) {
-      whereClause.customer.rawLedgerName = {
-        contains: search,
-      };
+      whereClause.OR = [
+        { customer: { rawLedgerName: { contains: search, mode: 'insensitive' } } },
+        { customer: { normalizedName: { contains: search, mode: 'insensitive' } } },
+        { billNo: { contains: search, mode: 'insensitive' } },
+        { customer: { contacts: { some: { personName: { contains: search, mode: 'insensitive' } } } } },
+        { customer: { contacts: { some: { mobileNumber: { contains: search } } } } },
+      ];
     }
 
     if (filter === 'FLAGGED') {
-      whereClause.customer.isFlagged = true;
+      whereClause.customer = { ...whereClause.customer, isFlagged: true };
     } else if (filter === 'SETTLED') {
-      whereClause.status = 'SETTLED';
+      whereClause.OR = [
+        { status: 'Payment Received' },
+        { outstandingAmount: { lte: 0 } },
+      ];
     } else if (filter === 'OVERDUE') {
-      whereClause.status = 'OVERDUE';
-      whereClause.remainingBalance = { gt: 0 };
+      whereClause.dueDate = { lt: todayStart };
+      whereClause.outstandingAmount = { gt: 0 };
+      whereClause.status = { not: 'Payment Received' };
     } else if (filter === 'DUE_TODAY') {
-      whereClause.status = 'DUE_TODAY';
-      whereClause.remainingBalance = { gt: 0 };
+      whereClause.dueDate = { gte: todayStart, lte: todayEnd };
+      whereClause.outstandingAmount = { gt: 0 };
+      whereClause.status = { not: 'Payment Received' };
     } else if (filter === 'UPCOMING') {
-      whereClause.status = 'UPCOMING';
-      whereClause.remainingBalance = { gt: 0 };
+      whereClause.dueDate = { gt: todayEnd };
+      whereClause.outstandingAmount = { gt: 0 };
+      whereClause.status = { not: 'Payment Received' };
     }
 
-    const dues = await prisma.due.findMany({
+    const invoices = await prisma.invoice.findMany({
       where: whereClause,
       include: {
         customer: {
@@ -44,10 +59,7 @@ export async function GET(req: NextRequest) {
             reminderSchedules: true,
           },
         },
-        installments: {
-          orderBy: { installmentNumber: 'asc' },
-        },
-        paymentRecords: {
+        payments: {
           orderBy: { paymentDate: 'desc' },
         },
         reminderLogs: {
@@ -58,12 +70,14 @@ export async function GET(req: NextRequest) {
       orderBy: { dueDate: 'asc' },
     });
 
-    // Compute live aging statistics for dashboard
-    const allDues = await prisma.due.findMany({
+    // Compute live aging statistics for dashboard from all active invoices
+    const allInvoices = await prisma.invoice.findMany({
       where: {
         customer: { status: { not: 'EXCLUDED' } },
       },
-      include: { customer: true },
+      include: {
+        customer: true,
+      },
     });
 
     let totalReceivables = 0;
@@ -71,31 +85,28 @@ export async function GET(req: NextRequest) {
     let upcomingCount = 0;
     let dueTodayCount = 0;
     let overdueCount = 0;
-    let flaggedCount = 0;
     let settledCount = 0;
+    const flaggedCustomerIds = new Set<string>();
 
-    const now = new Date();
-
-    for (const d of allDues) {
-      if (d.customer.isFlagged) {
-        flaggedCount++;
+    for (const inv of allInvoices) {
+      if (inv.customer.isFlagged) {
+        flaggedCustomerIds.add(inv.customerId);
       }
 
-      if (d.status === 'SETTLED' || d.remainingBalance <= 0) {
+      if (inv.status === 'Payment Received' || inv.outstandingAmount <= 0) {
         settledCount++;
         continue;
       }
 
-      totalReceivables += d.remainingBalance;
+      totalReceivables += inv.outstandingAmount;
 
-      const { category } = categorizeDue(d.remainingBalance, new Date(d.dueDate), now);
-
-      if (category === 'OVERDUE') {
+      const dueTime = new Date(inv.dueDate).getTime();
+      if (dueTime < todayStart.getTime()) {
         overdueCount++;
-        totalOverdueAmount += d.remainingBalance;
-      } else if (category === 'DUE_TODAY') {
+        totalOverdueAmount += inv.outstandingAmount;
+      } else if (dueTime <= todayEnd.getTime()) {
         dueTodayCount++;
-      } else if (category === 'UPCOMING') {
+      } else {
         upcomingCount++;
       }
     }
@@ -108,11 +119,12 @@ export async function GET(req: NextRequest) {
         upcomingCount,
         dueTodayCount,
         overdueCount,
-        flaggedCount,
+        flaggedCount: flaggedCustomerIds.size,
         settledCount,
-        totalCount: allDues.length,
+        totalCount: allInvoices.length,
       },
-      dues,
+      dues: invoices, // Kept as 'dues' key for seamless backward compatibility with existing components
+      invoices,
     });
   } catch (error: any) {
     console.error('Fetch Dues API error:', error);
