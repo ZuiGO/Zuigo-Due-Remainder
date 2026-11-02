@@ -83,8 +83,12 @@ export function compileDigestMessage(payload: DigestPayload): { subject: string;
 
 /**
  * Executes a locked, idempotent dispatch run for a tenant.
+ * Optionally restricts dispatch to specific approved customer IDs (Semi-Automated Approval Queue mode).
  */
-export async function executeTenantDigestRun(tenantId: string) {
+export async function executeTenantDigestRun(
+  tenantId: string,
+  approvedCustomerIds?: string[]
+) {
   const todayDate = new Date().toISOString().split('T')[0];
   const now = new Date();
 
@@ -123,12 +127,18 @@ export async function executeTenantDigestRun(tenantId: string) {
     const bankDetails = `${tenant?.bankName || 'HDFC Bank'}, A/C: ${tenant?.bankAccountNo || '50200012345678'}, IFSC: ${tenant?.bankIfscCode || 'HDFC0001234'}`;
 
     // 3. Fetch customers with active overdue/due bills where reminderEnabled is true
+    const customerFilter: any = {
+      tenantId,
+      reminderEnabled: true,
+      status: { not: 'EXCLUDED' },
+    };
+
+    if (approvedCustomerIds && approvedCustomerIds.length > 0) {
+      customerFilter.id = { in: approvedCustomerIds };
+    }
+
     const customers = await prisma.customer.findMany({
-      where: {
-        tenantId,
-        reminderEnabled: true,
-        status: { not: 'EXCLUDED' },
-      },
+      where: customerFilter,
       include: {
         contacts: {
           where: { isActive: true },
@@ -322,4 +332,141 @@ export async function executeTenantDigestRun(tenantId: string) {
     });
     throw err;
   }
+}
+
+export interface QueuedDigestCustomer {
+  customerId: string;
+  partyName: string;
+  rawLedgerName: string;
+  ledgerCode: string;
+  branchCode: string;
+  contactPerson: string;
+  mobileNumber?: string;
+  emailId?: string;
+  language: string;
+  totalDue: number;
+  invoicesCount: number;
+  bills: DigestItem[];
+  previewMessage: string;
+  previewSubject: string;
+  alreadySentToday: {
+    whatsapp: boolean;
+    sms: boolean;
+    email: boolean;
+  };
+  hasContacts: boolean;
+  reminderEnabled: boolean;
+  pauseNote?: string | null;
+}
+
+/**
+ * Returns today's pending digest messages for all eligible customers,
+ * allowing accounts executives to review, pause, or exclude parties before dispatching.
+ */
+export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedDigestCustomer[]> {
+  const now = new Date();
+  const todayDate = now.toISOString().split('T')[0];
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+  });
+
+  const companyName = tenant?.companyName || 'Abhiyadna Machine Tools';
+  const bankDetails = `${tenant?.bankName || 'HDFC Bank'}, A/C: ${tenant?.bankAccountNo || '50200012345678'}, IFSC: ${tenant?.bankIfscCode || 'HDFC0001234'}`;
+
+  const customers = await prisma.customer.findMany({
+    where: {
+      tenantId,
+      status: { not: 'EXCLUDED' },
+    },
+    include: {
+      contacts: {
+        where: { isActive: true },
+      },
+      invoices: {
+        where: {
+          actionType: 'Follow-up Required',
+          outstandingAmount: { gt: 0 },
+          status: { notIn: ['Payment Received', 'Closed'] },
+          OR: [
+            { nextFollowUpDate: null },
+            { nextFollowUpDate: { lte: now } },
+          ],
+        },
+        orderBy: { daysOverdue: 'desc' },
+      },
+      reminderLogs: {
+        where: { sentDate: todayDate },
+        select: { channel: true },
+      },
+    },
+  });
+
+  const queue: QueuedDigestCustomer[] = [];
+
+  for (const customer of customers) {
+    if (customer.invoices.length === 0) continue;
+
+    const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
+    const contactPerson = primaryContact?.personName || 'Sir / Madam';
+    const customerName = customer.partyName || customer.rawLedgerName;
+    const language = customer.preferredLanguage || 'English';
+
+    const digestItems: DigestItem[] = customer.invoices.map(i => ({
+      billNo: i.billNo,
+      billAmount: i.billAmount,
+      outstandingAmount: i.outstandingAmount,
+      dueDate: i.dueDate,
+      daysOverdue: i.daysOverdue,
+      priority: i.priority,
+    }));
+
+    const totalDue = digestItems.reduce((sum, i) => sum + i.outstandingAmount, 0);
+
+    const { subject, body } = compileDigestMessage({
+      customerId: customer.id,
+      customerName,
+      contactPerson,
+      recipientPhone: primaryContact?.mobileNumber || undefined,
+      recipientEmail: primaryContact?.emailId || undefined,
+      channel: 'WHATSAPP',
+      language,
+      companyName,
+      bankDetails,
+      totalOutstanding: totalDue,
+      bills: digestItems,
+    });
+
+    const alreadySentToday = {
+      whatsapp: customer.reminderLogs.some(l => l.channel === 'WHATSAPP'),
+      sms: customer.reminderLogs.some(l => l.channel === 'SMS'),
+      email: customer.reminderLogs.some(l => l.channel === 'EMAIL'),
+    };
+
+    queue.push({
+      customerId: customer.id,
+      partyName: customerName,
+      rawLedgerName: customer.rawLedgerName,
+      ledgerCode: customer.ledgerCode,
+      branchCode: customer.branchCode,
+      contactPerson,
+      mobileNumber: primaryContact?.mobileNumber || undefined,
+      emailId: primaryContact?.emailId || undefined,
+      language,
+      totalDue,
+      invoicesCount: digestItems.length,
+      bills: digestItems,
+      previewMessage: body,
+      previewSubject: subject,
+      alreadySentToday,
+      hasContacts: Boolean(primaryContact?.mobileNumber || primaryContact?.emailId),
+      reminderEnabled: customer.reminderEnabled,
+      pauseNote: customer.pauseNote,
+    });
+  }
+
+  // Sort queue by total due descending
+  queue.sort((a, b) => b.totalDue - a.totalDue);
+
+  return queue;
 }

@@ -120,15 +120,17 @@
 │           ├── upload/route.ts <-- Real multipart Excel (.xlsx/.xls/.csv) ingestion
 │           ├── groq/generate/  <-- Groq AI reminder generation endpoint
 │           ├── customers/      <-- Customer master & flag toggle
+│           │   └── contacts/   <-- Add/edit customer contact details with E.164 phone formatting
 │           ├── dues/route.ts   <-- Invoice receivables query & KPIs
 │           ├── invoices/status/<-- Manual invoice status updater
 │           ├── payments/       <-- Record manual payment / installment
 │           ├── installments/   <-- Split invoice into milestone installments
 │           ├── reminders/
-│           │   ├── send/route.ts     <-- Manual reminder trigger with action URLs
-│           │   └── auto-check/route.ts<-- Automated cron trigger
+│           │   ├── send/route.ts           <-- Manual reminder trigger with action URLs
+│           │   ├── auto-check/route.ts     <-- Full auto cron trigger
+│           │   └── approval-queue/route.ts <-- Semi-automated daily approval queue & selective dispatch
 │           ├── templates/route.ts    <-- Template CRUD
-│           ├── settings/route.ts     <-- Credentials & cadence settings
+│           ├── settings/route.ts     <-- White-label tenant branding & gateway settings
 │           └── logs/route.ts         <-- Delivery logs
 ```
 
@@ -140,9 +142,9 @@
    ```powershell
    npx prisma db push
    ```
-2. **Run Tests:**
+2. **Run All 14 Integration & Unit Tests:**
    ```powershell
-   npx tsx --test src/tests/parser.test.ts src/tests/payment-engine.test.ts src/tests/reminder-engine.test.ts src/tests/template-renderer.test.ts src/tests/worker.test.ts
+   npx tsx --test src/tests/multi-tenant-schema.test.ts src/tests/alv-and-diff.test.ts src/tests/promise-to-pay.test.ts src/tests/digest-engine.test.ts src/tests/approval-queue-and-contacts.test.ts
    ```
 3. **Build Application:**
    ```powershell

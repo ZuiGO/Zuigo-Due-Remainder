@@ -22,7 +22,14 @@ import {
   FileUp, 
   Layers, 
   CalendarClock, 
-  BadgeCheck 
+  BadgeCheck,
+  ListChecks,
+  Eye,
+  CheckSquare,
+  Square,
+  X,
+  MessageSquare,
+  AlertTriangle
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -33,6 +40,16 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [runningAutoCheck, setRunningAutoCheck] = useState(false);
   const [autoCheckMsg, setAutoCheckMsg] = useState<string | null>(null);
+
+  // Approval Queue State (Semi-Automated Dispatch Mode)
+  const [showApprovalQueue, setShowApprovalQueue] = useState(false);
+  const [queuedItems, setQueuedItems] = useState<any[]>([]);
+  const [selectedQueueIds, setSelectedQueueIds] = useState<Set<string>>(new Set());
+  const [loadingQueue, setLoadingQueue] = useState(false);
+  const [dispatchingQueue, setDispatchingQueue] = useState(false);
+  const [queueActionMsg, setQueueActionMsg] = useState<string | null>(null);
+  const [inspectMessage, setInspectMessage] = useState<any | null>(null);
+  const [queuedCount, setQueuedCount] = useState<number>(0);
 
   // Remind modal state
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
@@ -63,6 +80,17 @@ export default function DashboardPage() {
         );
         setCriticalDues(critical.slice(0, 6));
       }
+
+      // Fetch pending approval queue count
+      try {
+        const qRes = await fetch('/api/reminders/approval-queue');
+        const qData = await qRes.json();
+        if (qData.success) {
+          setQueuedCount(qData.totalQueuedCount || 0);
+        }
+      } catch (err) {
+        console.error('Queue count fetch error:', err);
+      }
     } catch (e) {
       console.error('Fetch dashboard error:', e);
     } finally {
@@ -73,6 +101,83 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  const fetchApprovalQueue = async () => {
+    try {
+      setLoadingQueue(true);
+      setQueueActionMsg(null);
+      const res = await fetch('/api/reminders/approval-queue');
+      const data = await res.json();
+      if (data.success) {
+        setQueuedItems(data.queue);
+        setQueuedCount(data.totalQueuedCount || 0);
+        // Default select all eligible customers who have registered contacts and haven't been sent today
+        const autoSelected = new Set<string>();
+        data.queue.forEach((item: any) => {
+          if (item.hasContacts && !item.alreadySentToday.whatsapp && item.reminderEnabled) {
+            autoSelected.add(item.customerId);
+          }
+        });
+        setSelectedQueueIds(autoSelected);
+      }
+    } catch (e) {
+      console.error('Fetch approval queue error:', e);
+    } finally {
+      setLoadingQueue(false);
+    }
+  };
+
+  const handleOpenApprovalQueue = () => {
+    setShowApprovalQueue(true);
+    fetchApprovalQueue();
+  };
+
+  const handleToggleQueueSelect = (id: string) => {
+    const next = new Set(selectedQueueIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedQueueIds(next);
+  };
+
+  const handleSelectAllQueue = () => {
+    if (selectedQueueIds.size === queuedItems.length) {
+      setSelectedQueueIds(new Set());
+    } else {
+      setSelectedQueueIds(new Set(queuedItems.map(q => q.customerId)));
+    }
+  };
+
+  const handleDispatchApprovedQueue = async () => {
+    if (selectedQueueIds.size === 0) {
+      alert('Please select at least one customer to approve.');
+      return;
+    }
+
+    try {
+      setDispatchingQueue(true);
+      setQueueActionMsg(null);
+      const res = await fetch('/api/reminders/approval-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvedCustomerIds: Array.from(selectedQueueIds),
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setQueueActionMsg(data.message);
+        fetchDashboardData();
+        fetchApprovalQueue();
+      } else {
+        setQueueActionMsg('Error: ' + data.error);
+      }
+    } catch (err: any) {
+      setQueueActionMsg('Error: ' + err?.message);
+    } finally {
+      setDispatchingQueue(false);
+    }
+  };
 
   const handleRunAutoCheck = async () => {
     try {
@@ -239,13 +344,26 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition"
+            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition"
           >
             <Upload className="w-4 h-4 text-indigo-600" />
             Import SAP Dues / Contacts
+          </button>
+
+          <button
+            onClick={handleOpenApprovalQueue}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-700 text-xs font-bold hover:bg-purple-100 shadow-sm transition"
+          >
+            <ListChecks className="w-4 h-4 text-purple-600" />
+            <span>Review Approval Queue</span>
+            {queuedCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-600 text-white font-extrabold shadow-sm">
+                {queuedCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -254,7 +372,7 @@ export default function DashboardPage() {
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 shadow-sm transition disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${runningAutoCheck ? 'animate-spin' : ''}`} />
-            {runningAutoCheck ? 'Dispatching Digests...' : 'Run Daily Digest Check'}
+            {runningAutoCheck ? 'Dispatching...' : 'Quick Auto-Dispatch'}
           </button>
         </div>
       </div>
@@ -788,6 +906,270 @@ export default function DashboardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Approval Queue Modal (Semi-Automated Dispatch Mode) */}
+      {showApprovalQueue && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-purple-100 text-purple-700 rounded-xl">
+                  <ListChecks className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-lg flex items-center gap-2">
+                    Daily Digest Approval Queue
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-purple-100 text-purple-800">
+                      Semi-Automated Review
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Review consolidated digests before dispatching. Exclude or pause sensitive customer accounts with one click.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowApprovalQueue(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Notification Banner */}
+            {queueActionMsg && (
+              <div className="mx-6 mt-4 p-3.5 bg-purple-50 border border-purple-200 text-purple-900 text-xs font-semibold rounded-xl flex items-center justify-between">
+                <span>{queueActionMsg}</span>
+                <button onClick={() => setQueueActionMsg(null)} className="text-purple-700 font-bold">✕</button>
+              </div>
+            )}
+
+            {/* Summary & Controls Bar */}
+            <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 shrink-0 text-xs">
+              <div className="flex items-center gap-4 text-slate-600">
+                <span>
+                  <strong className="text-slate-900">{queuedItems.length}</strong> Customer Accounts
+                </span>
+                <span>•</span>
+                <span>
+                  Total Receivables:{' '}
+                  <strong className="text-rose-600 font-bold">
+                    ₹{queuedItems.reduce((sum, item) => sum + item.totalDue, 0).toLocaleString('en-IN')}
+                  </strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Approved for Dispatch:{' '}
+                  <strong className="text-purple-700 font-bold">{selectedQueueIds.size}</strong>
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSelectAllQueue}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 font-semibold text-slate-700 hover:bg-slate-100 transition"
+                >
+                  {selectedQueueIds.size === queuedItems.length ? 'Deselect All' : 'Select All Eligible'}
+                </button>
+                <button
+                  onClick={fetchApprovalQueue}
+                  disabled={loadingQueue}
+                  className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                  title="Refresh Queue"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingQueue ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Queue Table */}
+            <div className="overflow-y-auto flex-1 p-6">
+              {loadingQueue ? (
+                <div className="py-16 text-center text-slate-400">Loading queued reminders...</div>
+              ) : queuedItems.length === 0 ? (
+                <div className="py-16 text-center text-slate-500">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                  <p className="font-bold text-sm text-slate-800">Queue is Clear for Today!</p>
+                  <p className="text-xs text-slate-400 mt-1">All eligible daily digests have already been dispatched or no open dues qualify.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {queuedItems.map((item) => {
+                    const isSelected = selectedQueueIds.has(item.customerId);
+                    const canSend = item.hasContacts && !item.alreadySentToday.whatsapp && item.reminderEnabled;
+
+                    return (
+                      <div
+                        key={item.customerId}
+                        className={`p-4 rounded-2xl border transition ${
+                          isSelected
+                            ? 'bg-purple-50/30 border-purple-200 shadow-sm'
+                            : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-start gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleQueueSelect(item.customerId)}
+                              disabled={!canSend}
+                              className={`mt-1 text-slate-400 transition disabled:opacity-30 ${
+                                isSelected ? 'text-purple-600' : 'hover:text-slate-600'
+                              }`}
+                            >
+                              {isSelected ? (
+                                <CheckSquare className="w-5 h-5 text-purple-600" />
+                              ) : (
+                                <Square className="w-5 h-5" />
+                              )}
+                            </button>
+
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-slate-900 text-sm">
+                                  {item.partyName}
+                                </h4>
+                                {!item.hasContacts && (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                    Missing Contacts
+                                  </span>
+                                )}
+                                {item.alreadySentToday.whatsapp && (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                    Already Sent Today
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-mono mt-1">
+                                <span>Ledger: {item.ledgerCode}</span>
+                                <span>•</span>
+                                <span>Contact: <strong className="text-slate-700 font-sans">{item.contactPerson}</strong></span>
+                                {item.mobileNumber && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="flex items-center gap-1">
+                                      <Phone className="w-3 h-3 text-slate-400" /> {item.mobileNumber}
+                                    </span>
+                                  </>
+                                )}
+                                {item.emailId && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="flex items-center gap-1">
+                                      <Mail className="w-3 h-3 text-slate-400" /> {item.emailId}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4 sm:text-right shrink-0">
+                            <div>
+                              <div className="font-extrabold text-slate-900 text-base">
+                                ₹{item.totalDue.toLocaleString('en-IN')}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {item.invoicesCount} open bill(s)
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => setInspectMessage(item)}
+                              className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-sm transition"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Preview Digest</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-5 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowApprovalQueue(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Close
+              </button>
+
+              <button
+                onClick={handleDispatchApprovedQueue}
+                disabled={dispatchingQueue || selectedQueueIds.size === 0}
+                className="px-6 py-2.5 rounded-xl text-xs font-extrabold bg-purple-600 hover:bg-purple-700 text-white shadow-md transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {dispatchingQueue ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Dispatching Digests...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>Approve & Dispatch Selected ({selectedQueueIds.size})</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inspect Message Modal */}
+      {inspectMessage && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h4 className="font-extrabold text-slate-900 text-sm">
+                  Digest Copy Preview: {inspectMessage.partyName}
+                </h4>
+                <p className="text-[11px] text-slate-500 font-mono">
+                  Target: {inspectMessage.mobileNumber || inspectMessage.emailId}
+                </p>
+              </div>
+              <button
+                onClick={() => setInspectMessage(null)}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                Compiled WhatsApp & SMS Copy
+              </label>
+              <pre className="p-4 bg-slate-900 text-slate-100 rounded-xl text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
+                {inspectMessage.previewMessage}
+              </pre>
+
+              <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
+                <span>Language: <strong>{inspectMessage.language}</strong></span>
+                <span>Includes <strong>{inspectMessage.invoicesCount}</strong> open invoice(s)</span>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+              <button
+                onClick={() => setInspectMessage(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800"
+              >
+                Close Preview
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -8,10 +8,26 @@ export async function GET(req: NextRequest) {
       where: { customerId: null },
     });
 
+    const activeTenant = await prisma.tenant.findFirst({
+      where: { slug: 'abmato' },
+    });
+
+    const allTenants = await prisma.tenant.findMany({
+      select: {
+        id: true,
+        slug: true,
+        companyName: true,
+        brandColor: true,
+        logoUrl: true,
+      },
+    });
+
     return NextResponse.json({
       success: true,
       integrations,
       schedule,
+      tenant: activeTenant,
+      allTenants,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
@@ -21,9 +37,45 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { integrations = [], schedule } = body;
+    const { integrations = [], schedule, tenant: tenantData, newTenant } = body;
 
-    // Update integrations
+    // 1. Create new tenant if requested
+    if (newTenant && newTenant.slug && newTenant.companyName) {
+      const cleanSlug = newTenant.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      await prisma.tenant.upsert({
+        where: { slug: cleanSlug },
+        update: {
+          companyName: newTenant.companyName,
+          brandColor: newTenant.brandColor || '#4f46e5',
+        },
+        create: {
+          slug: cleanSlug,
+          companyName: newTenant.companyName,
+          brandColor: newTenant.brandColor || '#4f46e5',
+          bankName: newTenant.bankName || null,
+          bankAccountNo: newTenant.bankAccountNo || null,
+          bankIfscCode: newTenant.bankIfscCode || null,
+          bankUpiId: newTenant.bankUpiId || null,
+        },
+      });
+    }
+
+    // 2. Update active tenant white-label branding & bank details
+    if (tenantData && tenantData.id) {
+      await prisma.tenant.update({
+        where: { id: tenantData.id },
+        data: {
+          companyName: tenantData.companyName,
+          brandColor: tenantData.brandColor,
+          bankName: tenantData.bankName,
+          bankAccountNo: tenantData.bankAccountNo,
+          bankIfscCode: tenantData.bankIfscCode,
+          bankUpiId: tenantData.bankUpiId,
+        },
+      });
+    }
+
+    // 3. Update integrations
     for (const item of integrations) {
       if (item.providerType) {
         await prisma.integrationSetting.upsert({
@@ -45,7 +97,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Update schedule
+    // 4. Update schedule
     if (schedule) {
       const existing = await prisma.reminderSchedule.findFirst({
         where: { customerId: null },
