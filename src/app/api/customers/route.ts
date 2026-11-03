@@ -18,6 +18,20 @@ export async function GET(req: NextRequest) {
           orderBy: { dueDate: 'asc' },
         },
         reminderSchedules: true,
+        reminderLogs: {
+          orderBy: { dispatchedAt: 'desc' },
+          take: 20,
+          select: {
+            id: true,
+            channel: true,
+            recipient: true,
+            status: true,
+            sentDate: true,
+            dispatchedAt: true,
+            messageContent: true,
+            subject: true,
+          },
+        },
       },
       orderBy: { rawLedgerName: 'asc' },
     });
@@ -32,7 +46,16 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { customerId, isFlagged, flagReason, reminderEnabled, pauseNote } = body;
+    const {
+      customerId,
+      isFlagged,
+      flagReason,
+      reminderEnabled,
+      pauseNote,
+      reminderMode,
+      frequencyDays,
+      channels,
+    } = body;
 
     if (!customerId) {
       return NextResponse.json({ error: 'customerId required' }, { status: 400 });
@@ -53,9 +76,48 @@ export async function POST(req: NextRequest) {
       updateData.pauseNote = pauseNote || (reminderEnabled ? null : 'Paused by user');
     }
 
+    if (reminderMode !== undefined) {
+      // FULLY_AUTOMATED or SEMI_AUTOMATED
+      updateData.reminderMode = reminderMode;
+    }
+
+    // Handle Frequency and Channels in ReminderSchedule
+    if (frequencyDays !== undefined || channels !== undefined) {
+      const existingSchedule = await prisma.reminderSchedule.findFirst({
+        where: { customerId },
+      });
+
+      if (existingSchedule) {
+        await prisma.reminderSchedule.update({
+          where: { id: existingSchedule.id },
+          data: {
+            reminder3DaysAfter: frequencyDays !== undefined ? Number(frequencyDays) : existingSchedule.reminder3DaysAfter,
+            channels: channels !== undefined ? String(channels) : existingSchedule.channels,
+          },
+        });
+      } else {
+        await prisma.reminderSchedule.create({
+          data: {
+            customerId,
+            reminder3DaysAfter: frequencyDays !== undefined ? Number(frequencyDays) : 3,
+            channels: channels !== undefined ? String(channels) : 'WHATSAPP,SMS,EMAIL',
+          },
+        });
+      }
+    }
+
     const updated = await prisma.customer.update({
       where: { id: customerId },
       data: updateData,
+      include: {
+        contacts: true,
+        invoices: true,
+        reminderSchedules: true,
+        reminderLogs: {
+          orderBy: { dispatchedAt: 'desc' },
+          take: 20,
+        },
+      },
     });
 
     return NextResponse.json({ success: true, customer: updated });

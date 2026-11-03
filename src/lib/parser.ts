@@ -278,6 +278,11 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
     const rawAdjustment = Number(row['Adjustment'] || row['adjustment'] || 0);
     const rawOutstanding = Number(row['Outstanding'] || row['Outstanding Amount'] || row['outstanding_amount'] || 0);
 
+    // Strictly exclude rows with negative amounts (e.g. -123 or -49899 etc.)
+    if (rawBillAmt < 0 || rawOutstanding < 0) {
+      continue;
+    }
+
     // Identify if entry is an Advance Receipt / Credit Note (AD voucher, negative balance, or advance narration)
     const isCreditOrAdvance =
       rawBillAmt < 0 ||
@@ -580,6 +585,9 @@ function parseSheetRows(rows: any[][], customerMap: Map<string, ParsedCustomerRe
       const outstanding = parseFloat(getCol(row, headerColMap, ['outstanding amount', 'outstanding', 'balance']) || '0');
       const billAmount = parseFloat(getCol(row, headerColMap, ['bill amount', 'amount', 'invoice amount']) || '0');
       const actionType = getCol(row, headerColMap, ['action type', 'action']) || 'Follow-up Required';
+
+      // Strictly exclude negative amounts (e.g. -123 or -49899)
+      if (outstanding < 0 || billAmount < 0) continue;
 
       if (!partyName || !billNo || partyName.toLowerCase() === 'grand total') continue;
 

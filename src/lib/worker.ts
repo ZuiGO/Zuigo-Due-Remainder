@@ -76,6 +76,18 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
   for (const invoice of invoices) {
     const customer = invoice.customer;
 
+    // Check if reminders are stopped/disabled for this customer
+    if (customer.reminderEnabled === false) {
+      summary.skippedCount++;
+      continue;
+    }
+
+    // Check if customer is set to FULLY_AUTOMATED (if SEMI_AUTOMATED, requires user review/manual dispatch)
+    if (customer.reminderMode !== 'FULLY_AUTOMATED') {
+      summary.skippedCount++;
+      continue;
+    }
+
     // A. Check if customer exceeded threshold and must be flagged
     if (customer.consecutiveRemindersCount >= defaultCadence.maxRemindersBeforeFlag) {
       if (!customer.isFlagged) {
@@ -151,8 +163,12 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
       company_bank_details: 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234',
     };
 
-    // Channels to dispatch across
-    const channelsToDispatch: ('WHATSAPP' | 'SMS' | 'EMAIL')[] = ['WHATSAPP', 'SMS', 'EMAIL'];
+    // Channels to dispatch across from customer configuration
+    const rawChannels = customer.reminderSchedules?.[0]?.channels || 'WHATSAPP,SMS,EMAIL';
+    const activeChannels = rawChannels.split(',').map((s: string) => s.trim().toUpperCase());
+    const channelsToDispatch = (['WHATSAPP', 'SMS', 'EMAIL'] as const).filter((ch) =>
+      activeChannels.includes(ch)
+    );
     let anyDispatched = false;
 
     for (const ch of channelsToDispatch) {

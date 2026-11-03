@@ -5,23 +5,20 @@ import {
   Receipt, 
   Search, 
   Send, 
-  CreditCard, 
   Calendar, 
   ShieldAlert, 
-  Split, 
   CheckCircle, 
   MessageSquare, 
   Mail, 
   Phone, 
-  Sparkles, 
   Upload, 
   FileSpreadsheet, 
   FileUp, 
   RefreshCw, 
   Clock, 
   Filter, 
-  CalendarClock, 
-  Layers 
+  Bell, 
+  BellOff 
 } from 'lucide-react';
 
 export default function DuesPage() {
@@ -31,30 +28,24 @@ export default function DuesPage() {
   const [search, setSearch] = useState('');
 
   // Modals
-  const [activeModal, setActiveModal] = useState<'PAYMENT' | 'INSTALLMENT' | 'REMIND' | 'UPLOAD' | null>(null);
+  const [activeModal, setActiveModal] = useState<'REMIND' | 'UPLOAD' | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
 
-  // Payment form states
-  const [paymentAmount, setPaymentAmount] = useState('');
-  const [paymentMode, setPaymentMode] = useState('BANK_TRANSFER');
-  const [referenceNo, setReferenceNo] = useState('');
-  const [paymentNotes, setPaymentNotes] = useState('');
-  const [sendReceipt, setSendReceipt] = useState(true);
-
-  // Promise-to-Pay states
-  const [enablePromiseToPay, setEnablePromiseToPay] = useState(false);
-  const [promisedAmount, setPromisedAmount] = useState('');
-  const [promisedDate, setPromisedDate] = useState('');
-
-  // Installment form states
-  const [installmentCount, setInstallmentCount] = useState(3);
-  const [installmentDays, setInstallmentDays] = useState(15);
+  // Partial Settlement Modal
+  const [partialModal, setPartialModal] = useState<{
+    isOpen: boolean;
+    invoice: any | null;
+    amount: string;
+  }>({
+    isOpen: false,
+    invoice: null,
+    amount: '',
+  });
 
   // Remind form states
   const [remindChannel, setRemindChannel] = useState<'WHATSAPP' | 'SMS' | 'EMAIL'>('WHATSAPP');
   const [remindLanguage, setRemindLanguage] = useState('English');
   const [customRemindMessage, setCustomRemindMessage] = useState('');
-  const [generatingGroq, setGeneratingGroq] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // Upload state
@@ -83,93 +74,62 @@ export default function DuesPage() {
     fetchDues();
   }, [filter, search]);
 
-  const handleOpenPayment = (inv: any) => {
-    setSelectedInvoice(inv);
-    setPaymentAmount(String(inv.outstandingAmount));
-    setReferenceNo('');
-    setPaymentNotes('');
+  const getPrewrittenMessage = (lang: string, inv: any) => {
+    if (!inv) return '';
+    const contact = inv.customer?.contacts?.[0];
+    const person = contact?.personName || 'Sir / Madam';
+    const billNo = inv.billNo;
+    const amount = inv.outstandingAmount;
+    const dueDate = new Date(inv.dueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const overdue = inv.daysOverdue || 0;
 
-    // Default promised date = next week
-    const defaultDate = new Date();
-    defaultDate.setDate(defaultDate.getDate() + 7);
-    setPromisedDate(defaultDate.toISOString().split('T')[0]);
-    setPromisedAmount('');
-    setEnablePromiseToPay(false);
-
-    setActiveModal('PAYMENT');
-  };
-
-  const handleOpenInstallment = (inv: any) => {
-    setSelectedInvoice(inv);
-    setInstallmentCount(3);
-    setInstallmentDays(15);
-    setActiveModal('INSTALLMENT');
+    if (lang === 'Hindi') {
+      return `नमस्ते ${person},\n\nअभिज्ञा मशीन टूल्स की ओर से बिल #${billNo} के बकाया भुगतान ₹${amount.toLocaleString('en-IN')} हेतु विनम्र स्मरण। देय तिथि: ${dueDate} (${overdue > 0 ? `${overdue} दिन विलंबित` : 'देय'})।\n\nकृपया जल्द से जल्द भुगतान कर रसीद साझा करें।\n\nसधन्यवाद,\nअभिज्ञा मशीन टूल्स`;
+    }
+    if (lang === 'Marathi') {
+      return `नमस्कार ${person},\n\nअभिज्ञा मशीन टूल्स कडून बिल #${billNo} च्या थकीत रक्कम ₹${amount.toLocaleString('en-IN')} बाबत स्मरण. देय दिनांक: ${dueDate} (${overdue > 0 ? `${overdue} दिवस थकीत` : 'देय'}).\n\nकृपया लवकरात लवकर रकमेचा भरणा करून तपशील पाठवावा.\n\nधन्यवाद,\nअभिज्ञा मशीन टूल्स`;
+    }
+    return `Dear ${person},\n\nThis is a polite reminder from Abhiyadna Machine Tools regarding Bill #${billNo} with an outstanding balance of ₹${amount.toLocaleString('en-IN')}. Due date was ${dueDate} (${overdue > 0 ? `${overdue} days overdue` : 'due today'}).\n\nPlease arrange for the settlement at your earliest convenience or share the transaction UTR details.\n\nThank you,\nAbhiyadna Machine Tools`;
   };
 
   const handleOpenRemind = (inv: any) => {
     setSelectedInvoice(inv);
-    setCustomRemindMessage('');
+    setCustomRemindMessage(getPrewrittenMessage(remindLanguage, inv));
     setActiveModal('REMIND');
   };
 
-  const submitPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedInvoice || paymentAmount === '') return;
+  const handleToggleCustomerReminder = async (customerId: string, enable: boolean) => {
     try {
-      const res = await fetch('/api/payments', {
+      const res = await fetch('/api/customers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          invoiceId: selectedInvoice.id,
-          amountPaid: Number(paymentAmount),
-          promisedAmount: enablePromiseToPay && promisedAmount ? Number(promisedAmount) : undefined,
-          promisedDate: enablePromiseToPay && promisedDate ? promisedDate : undefined,
-          paymentMode,
-          referenceNumber: referenceNo,
-          notes: paymentNotes,
-          sendReceipt,
+          customerId,
+          reminderEnabled: enable,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setActionMessage(data.message);
-        setActiveModal(null);
+        setActionMessage(enable ? 'Reminders resumed for customer' : 'Reminders stopped for customer');
         fetchDues();
-        setTimeout(() => setActionMessage(null), 4000);
-      } else {
-        alert(data.error || 'Payment error');
+        setTimeout(() => setActionMessage(null), 3000);
       }
-    } catch (err: any) {
-      alert('Error recording payment: ' + err?.message);
-    }
-  };
-
-  const submitInstallmentSplit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedInvoice) return;
-    try {
-      const res = await fetch('/api/installments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          invoiceId: selectedInvoice.id,
-          numberOfInstallments: Number(installmentCount),
-          intervalDays: Number(installmentDays),
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setActionMessage(data.message);
-        setActiveModal(null);
-        fetchDues();
-        setTimeout(() => setActionMessage(null), 4000);
-      }
-    } catch (err: any) {
-      alert('Error splitting installments: ' + err?.message);
+    } catch (e: any) {
+      alert('Error updating reminder status: ' + e?.message);
     }
   };
 
   const handleStatusChange = async (invoiceId: string, newStatus: string) => {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (newStatus === 'Partially Settled') {
+      setPartialModal({
+        isOpen: true,
+        invoice: inv,
+        amount: inv ? String(Math.round(inv.outstandingAmount / 2)) : '',
+      });
+      return;
+    }
+
     try {
       const res = await fetch('/api/invoices/status', {
         method: 'POST',
@@ -181,7 +141,7 @@ export default function DuesPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setActionMessage(data.message);
+        setActionMessage(`Status updated to ${newStatus}`);
         fetchDues();
         setTimeout(() => setActionMessage(null), 3000);
       }
@@ -190,35 +150,35 @@ export default function DuesPage() {
     }
   };
 
-  const handleGenerateWithGroq = async () => {
-    if (!selectedInvoice) return;
+  const handleConfirmPartialSettled = async () => {
+    if (!partialModal.invoice || !partialModal.amount) return;
+    const settledAmt = Number(partialModal.amount);
+    if (isNaN(settledAmt) || settledAmt <= 0) {
+      alert('Please enter a valid amount greater than 0');
+      return;
+    }
+
     try {
-      setGeneratingGroq(true);
-      const contact = selectedInvoice.customer.contacts?.[0];
-      const res = await fetch('/api/groq/generate', {
+      const res = await fetch('/api/invoices/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: (selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName).trim(),
-          contactPerson: contact?.personName || 'Sir / Madam',
-          billNo: selectedInvoice.billNo,
-          outstandingAmount: selectedInvoice.outstandingAmount,
-          dueDate: new Date(selectedInvoice.dueDate).toLocaleDateString('en-IN'),
-          daysOverdue: selectedInvoice.daysOverdue || 0,
-          agingBucket: selectedInvoice.agingBucket,
-          priority: selectedInvoice.priority,
-          channel: remindChannel,
-          language: remindLanguage,
+          invoiceId: partialModal.invoice.id,
+          status: 'Partially Settled',
+          settledAmount: settledAmt,
         }),
       });
       const data = await res.json();
-      if (data.success && data.message) {
-        setCustomRemindMessage(data.message);
+      if (data.success) {
+        setActionMessage(`Recorded settled amount ₹${settledAmt.toLocaleString('en-IN')}`);
+        setPartialModal({ isOpen: false, invoice: null, amount: '' });
+        fetchDues();
+        setTimeout(() => setActionMessage(null), 3500);
+      } else {
+        alert(data.error || 'Failed to update settled amount');
       }
     } catch (err: any) {
-      alert('Groq AI error: ' + err?.message);
-    } finally {
-      setGeneratingGroq(false);
+      alert('Error: ' + err?.message);
     }
   };
 
@@ -360,7 +320,7 @@ export default function DuesPage() {
                 <th className="py-3 px-6">Bill Amount (₹)</th>
                 <th className="py-3 px-6">Paid / Adjusted (₹)</th>
                 <th className="py-3 px-6 text-rose-600">Outstanding Due (₹)</th>
-                <th className="py-3 px-6">Due Date & Commitment</th>
+                <th className="py-3 px-6">Due Date</th>
                 <th className="py-3 px-6">Payment Status</th>
                 <th className="py-3 px-6 text-right">Actions</th>
               </tr>
@@ -388,7 +348,6 @@ export default function DuesPage() {
                 invoices.map((inv: any) => {
                   const contacts = inv.customer?.contacts || [];
                   const primaryContact = contacts.find((c: any) => c.isPrimary) || contacts[0];
-                  const commitment = inv.commitments && inv.commitments.length > 0 ? inv.commitments[0] : null;
                   const isAdvance =
                     Boolean(inv.billNo?.startsWith('AD')) ||
                     Boolean(inv.billNo?.includes('CN')) ||
@@ -400,6 +359,11 @@ export default function DuesPage() {
                       <td className="py-4 px-6 font-medium text-slate-900 max-w-xs">
                         <div>
                           <span className="font-bold">{inv.customer.partyName || inv.customer.rawLedgerName}</span>
+                          {inv.customer?.reminderEnabled === false && (
+                            <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                              <BellOff className="w-3 h-3 text-slate-400" /> Reminders Stopped
+                            </span>
+                          )}
                           {inv.customer.isFlagged && (
                             <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">
                               <ShieldAlert className="w-3 h-3" /> Flagged (≥5 Notices)
@@ -475,7 +439,7 @@ export default function DuesPage() {
                         )}
                       </td>
 
-                      {/* Due Date & Commitment */}
+                      {/* Due Date */}
                       <td className="py-4 px-6">
                         <div className="text-xs font-semibold text-slate-800">
                           {new Date(inv.dueDate).toLocaleDateString('en-IN', {
@@ -493,20 +457,9 @@ export default function DuesPage() {
                             <span className="text-slate-400">Due in {Math.abs(inv.daysOverdue)} days</span>
                           )}
                         </div>
-
-                        {/* Promise to Pay Badge */}
-                        {commitment && (
-                          <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                            <CalendarClock className="w-3 h-3 text-amber-600 shrink-0" />
-                            <span>
-                              Promised ₹{commitment.promisedAmount.toLocaleString('en-IN')} on{' '}
-                              {new Date(commitment.promisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                            </span>
-                          </div>
-                        )}
                       </td>
 
-                      {/* Payment Status Dropdown */}
+                      {/* Payment Status Dropdown - Only 3 Options */}
                       <td className="py-4 px-6">
                         {isAdvance ? (
                           <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-50 text-sky-800 border border-sky-200 inline-block">
@@ -514,32 +467,25 @@ export default function DuesPage() {
                           </span>
                         ) : (
                           <select
-                            value={inv.status}
+                            value={
+                              inv.status === 'Settled' || inv.status === 'Payment Received' || inv.status === 'Closed'
+                                ? 'Settled'
+                                : inv.status === 'Partially Settled' || inv.status === 'Partially Paid'
+                                ? 'Partially Settled'
+                                : 'Pending'
+                            }
                             onChange={(e) => handleStatusChange(inv.id, e.target.value)}
                             className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border focus:outline-none transition ${
-                              inv.status === 'Payment Received' || inv.status === 'Closed'
+                              inv.status === 'Settled' || inv.status === 'Payment Received' || inv.status === 'Closed'
                                 ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                                : inv.status === 'Payment Received - Pending SAP Confirmation'
-                                ? 'bg-teal-50 border-teal-300 text-teal-800'
-                                : inv.status === 'Partially Paid'
+                                : inv.status === 'Partially Settled' || inv.status === 'Partially Paid'
                                 ? 'bg-amber-50 border-amber-300 text-amber-800'
-                                : inv.status === 'Promise to Pay'
-                                ? 'bg-sky-50 border-sky-300 text-sky-800'
-                                : inv.status === 'Disputed' || inv.status === 'Escalated' || inv.status === 'Disputed / Grace Period Expired'
-                                ? 'bg-purple-50 border-purple-300 text-purple-800'
                                 : 'bg-rose-50 border-rose-300 text-rose-800'
                             }`}
                           >
                             <option value="Pending">Pending</option>
-                            <option value="Payment Received">Payment Received</option>
-                            <option value="Payment Received - Pending SAP Confirmation">Payment Received (Pending SAP)</option>
-                            <option value="Partially Paid">Partially Paid</option>
-                            <option value="Promise to Pay">Promise to Pay</option>
-                            <option value="Disputed">Disputed</option>
-                            <option value="Disputed / Grace Period Expired">Grace Period Expired</option>
-                            <option value="Escalated">Escalated</option>
-                            <option value="Legal Notice">Legal Notice</option>
-                            <option value="Closed">Closed</option>
+                            <option value="Partially Settled">Partially Settled</option>
+                            <option value="Settled">Settled</option>
                           </select>
                         )}
                       </td>
@@ -552,39 +498,31 @@ export default function DuesPage() {
                           </span>
                         ) : (
                           <>
-                            {inv.status !== 'Payment Received' && inv.status !== 'Closed' && inv.status !== 'Payment Received - Pending SAP Confirmation' && (
-                              <button
-                                onClick={() => handleStatusChange(inv.id, 'Payment Received')}
-                                title="Quick 1-Click Mark as Paid"
-                                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition inline-flex items-center gap-1"
-                              >
-                                <CheckCircle className="w-3.5 h-3.5" /> Mark Paid
-                              </button>
-                            )}
-
-                            <button
-                              onClick={() => handleOpenPayment(inv)}
-                              title="Record payment or Promise to Pay commitment"
-                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition inline-flex items-center gap-1"
-                            >
-                              <CreditCard className="w-3 h-3" /> Record Pay
-                            </button>
-
-                            <button
-                              onClick={() => handleOpenInstallment(inv)}
-                              title="Split remaining amount into milestone installments"
-                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition inline-flex items-center gap-1"
-                            >
-                              <Split className="w-3 h-3" /> Split
-                            </button>
-
                             <button
                               onClick={() => handleOpenRemind(inv)}
                               title="Send reminder via WhatsApp, SMS, or Email"
-                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition inline-flex items-center gap-1"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition inline-flex items-center gap-1 shadow-sm"
                             >
                               <Send className="w-3 h-3" /> Remind
                             </button>
+
+                            {inv.customer?.reminderEnabled !== false ? (
+                              <button
+                                onClick={() => handleToggleCustomerReminder(inv.customer.id, false)}
+                                title="Stop sending reminders to this customer"
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition inline-flex items-center gap-1"
+                              >
+                                <BellOff className="w-3 h-3" /> Stop Reminders
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleToggleCustomerReminder(inv.customer.id, true)}
+                                title="Resume sending reminders to this customer"
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition inline-flex items-center gap-1"
+                              >
+                                <Bell className="w-3 h-3" /> Resume Reminders
+                              </button>
+                            )}
                           </>
                         )}
                       </td>
@@ -597,224 +535,63 @@ export default function DuesPage() {
         </div>
       </div>
 
-      {/* MODAL 1: RECORD PAYMENT & PROMISE-TO-PAY COMMITMENT */}
-      {activeModal === 'PAYMENT' && selectedInvoice && (
+      {/* MODAL: PARTIALLY SETTLED AMOUNT */}
+      {partialModal.isOpen && partialModal.invoice && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2 text-emerald-600">
-                <CreditCard className="w-5 h-5" />
-                <h3 className="font-bold text-base text-slate-900">Record Payment & Commitment</h3>
-              </div>
-              <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="font-bold text-base text-slate-900">Enter Settled Amount</h3>
+              <button
+                onClick={() => setPartialModal({ isOpen: false, invoice: null, amount: '' })}
+                className="text-slate-400 hover:text-slate-600 font-bold"
+              >
+                ✕
+              </button>
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-50 text-xs text-slate-700 space-y-1">
-              <div className="font-bold text-slate-900">{selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName}</div>
-              <div>Bill No: <span className="font-mono font-bold text-indigo-600">{selectedInvoice.billNo}</span></div>
-              <div>Current Outstanding: <strong className="text-rose-600">₹{selectedInvoice.outstandingAmount.toLocaleString('en-IN')}</strong></div>
+              <div>Party: <strong>{partialModal.invoice.customer.partyName || partialModal.invoice.customer.rawLedgerName}</strong></div>
+              <div>Bill No: <span className="font-mono font-bold text-indigo-600">{partialModal.invoice.billNo}</span></div>
+              <div>Bill Amount: <strong>₹{partialModal.invoice.billAmount.toLocaleString('en-IN')}</strong></div>
+              <div>Current Outstanding: <strong className="text-rose-600">₹{partialModal.invoice.outstandingAmount.toLocaleString('en-IN')}</strong></div>
             </div>
 
-            <form onSubmit={submitPayment} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Amount Paid Today (₹)*</label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  value={paymentAmount}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setPaymentAmount(val);
-                    const diff = selectedInvoice.outstandingAmount - Number(val);
-                    if (diff > 0) {
-                      setPromisedAmount(String(diff));
-                      setEnablePromiseToPay(true);
-                    } else {
-                      setEnablePromiseToPay(false);
-                    }
-                  }}
-                  className="w-full text-sm font-semibold p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Settled Amount (₹)</label>
+              <input
+                type="number"
+                min="1"
+                max={partialModal.invoice.billAmount}
+                value={partialModal.amount}
+                onChange={(e) => setPartialModal({ ...partialModal, amount: e.target.value })}
+                placeholder="Enter amount settled..."
+                className="w-full text-sm font-bold p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                autoFocus
+              />
+              <p className="text-[11px] text-slate-400 mt-1">Remaining due balance will be synced in DB automatically.</p>
+            </div>
 
-              {/* Promise-to-Pay Commitment Section */}
-              {Number(paymentAmount) < selectedInvoice.outstandingAmount && (
-                <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                      <CalendarClock className="w-4 h-4 text-amber-600" />
-                      Promise-to-Pay (PTP) Commitment
-                    </label>
-                    <input
-                      type="checkbox"
-                      id="enablePTP"
-                      checked={enablePromiseToPay}
-                      onChange={(e) => setEnablePromiseToPay(e.target.checked)}
-                      className="rounded text-amber-600 focus:ring-amber-500"
-                    />
-                  </div>
-
-                  {enablePromiseToPay && (
-                    <div className="grid grid-cols-2 gap-2.5 pt-1">
-                      <div>
-                        <label className="block text-[11px] font-bold text-amber-800 mb-1">Promised Future Balance (₹)</label>
-                        <input
-                          type="number"
-                          step="any"
-                          value={promisedAmount}
-                          onChange={(e) => setPromisedAmount(e.target.value)}
-                          className="w-full text-xs font-bold p-2 rounded-lg border border-amber-300 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-amber-800 mb-1">Promised Payment Date</label>
-                        <input
-                          type="date"
-                          value={promisedDate}
-                          onChange={(e) => setPromisedDate(e.target.value)}
-                          className="w-full text-xs font-bold p-2 rounded-lg border border-amber-300 bg-white"
-                        />
-                      </div>
-                      <p className="text-[10px] text-amber-700 col-span-2">
-                        💡 Setting a commitment date automatically pauses reminder alerts until that date arrives.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
-                  <select
-                    value={paymentMode}
-                    onChange={(e) => setPaymentMode(e.target.value)}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="BANK_TRANSFER">Bank Transfer (NEFT/RTGS)</option>
-                    <option value="UPI">UPI / QR Code</option>
-                    <option value="CHEQUE">Cheque</option>
-                    <option value="CASH">Cash</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">UTR / Cheque No</label>
-                  <input
-                    type="text"
-                    value={referenceNo}
-                    onChange={(e) => setReferenceNo(e.target.value)}
-                    placeholder="UTR / Ref Number"
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Notes / Narration</label>
-                <input
-                  type="text"
-                  value={paymentNotes}
-                  onChange={(e) => setPaymentNotes(e.target.value)}
-                  placeholder="e.g. Paid ₹5,000 via UPI; promised balance next Monday"
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setActiveModal(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-bold bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 shadow-md transition"
-                >
-                  Confirm Payment & Schedule
-                </button>
-              </div>
-            </form>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPartialModal({ isOpen: false, invoice: null, amount: '' })}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPartialSettled}
+                className="px-5 py-2 text-xs font-bold bg-amber-600 text-white rounded-xl hover:bg-amber-700 shadow-md transition"
+              >
+                Okay
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* MODAL 2: SPLIT INTO INSTALLMENTS */}
-      {activeModal === 'INSTALLMENT' && selectedInvoice && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2 text-indigo-600">
-                <Split className="w-5 h-5" />
-                <h3 className="font-bold text-base text-slate-900">Split into Installments</h3>
-              </div>
-              <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-slate-50 text-xs text-slate-700 space-y-1">
-              <div>Party: <strong>{selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName}</strong></div>
-              <div>Bill No: <span className="font-mono font-bold text-indigo-600">{selectedInvoice.billNo}</span></div>
-              <div>Outstanding to Split: <strong className="text-indigo-600">₹{selectedInvoice.outstandingAmount.toLocaleString('en-IN')}</strong></div>
-            </div>
-
-            <form onSubmit={submitInstallmentSplit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Number of Installments</label>
-                  <select
-                    value={installmentCount}
-                    onChange={(e) => setInstallmentCount(Number(e.target.value))}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-300"
-                  >
-                    <option value={2}>2 Installments</option>
-                    <option value={3}>3 Installments</option>
-                    <option value={4}>4 Installments</option>
-                    <option value={5}>5 Installments</option>
-                    <option value={6}>6 Installments</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Interval Days</label>
-                  <select
-                    value={installmentDays}
-                    onChange={(e) => setInstallmentDays(Number(e.target.value))}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-300"
-                  >
-                    <option value={7}>Every 7 Days (Weekly)</option>
-                    <option value={10}>Every 10 Days</option>
-                    <option value={15}>Every 15 Days (Bi-weekly)</option>
-                    <option value={30}>Every 30 Days (Monthly)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 text-xs text-indigo-900">
-                Each installment will be approximately <strong>₹{(selectedInvoice.outstandingAmount / installmentCount).toFixed(0)}</strong> spaced every {installmentDays} days.
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setActiveModal(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-bold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 shadow-md transition"
-                >
-                  Confirm Installment Plan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 3: MANUAL REMINDER WITH GROQ AI */}
+      {/* MODAL 2: MANUAL REMINDER WITH PRE-WRITTEN TEMPLATES */}
       {activeModal === 'REMIND' && selectedInvoice && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
@@ -891,7 +668,7 @@ export default function DuesPage() {
                       type="button"
                       onClick={() => {
                         setRemindLanguage(l.id);
-                        setCustomRemindMessage('');
+                        setCustomRemindMessage(getPrewrittenMessage(l.id, selectedInvoice));
                       }}
                       className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
                         remindLanguage === l.id
@@ -910,20 +687,12 @@ export default function DuesPage() {
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Message Copy
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleGenerateWithGroq}
-                    disabled={generatingGroq}
-                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 transition disabled:opacity-50"
-                  >
-                    <Sparkles className={`w-3.5 h-3.5 ${generatingGroq ? 'animate-spin' : ''}`} />
-                    {generatingGroq ? 'Drafting...' : '✨ Generate with Groq AI'}
-                  </button>
+                  <span className="text-[11px] text-slate-400 font-medium">Pre-written & editable</span>
                 </div>
                 <textarea
                   value={customRemindMessage}
                   onChange={(e) => setCustomRemindMessage(e.target.value)}
-                  placeholder="Click 'Generate with Groq AI' or type custom copy..."
+                  placeholder="Type or edit reminder message..."
                   rows={4}
                   className="w-full text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />

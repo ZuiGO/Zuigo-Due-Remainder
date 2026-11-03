@@ -24,6 +24,8 @@ describe('Automated Reminder Worker & Defaulter Flagging Integration Test', () =
         rawLedgerName: 'Test Tech Defaulter Pvt Ltd',
         partyName: 'TEST TECH DEFAULTER PVT LTD',
         status: 'ACTIVE',
+        reminderMode: 'FULLY_AUTOMATED',
+        reminderEnabled: true,
         consecutiveRemindersCount: 4,
         totalOutstanding: 50000,
         contacts: {

@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
       whereClause.customer = { ...whereClause.customer, isFlagged: true };
     } else if (filter === 'SETTLED') {
       whereClause.OR = [
+        { status: 'Settled' },
         { status: 'Payment Received' },
         { status: 'Closed' },
         { status: 'Payment Received - Pending SAP Confirmation' },
@@ -50,15 +51,15 @@ export async function GET(req: NextRequest) {
     } else if (filter === 'OVERDUE') {
       whereClause.dueDate = { lt: todayStart };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
+      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
     } else if (filter === 'DUE_TODAY') {
       whereClause.dueDate = { gte: todayStart, lte: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
+      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
     } else if (filter === 'UPCOMING') {
       whereClause.dueDate = { gt: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
+      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
     }
 
     const invoices = await prisma.invoice.findMany({
@@ -111,6 +112,7 @@ export async function GET(req: NextRequest) {
       }
 
       if (
+        inv.status === 'Settled' ||
         inv.status === 'Payment Received' ||
         inv.status === 'Closed' ||
         inv.status === 'Payment Received - Pending SAP Confirmation' ||

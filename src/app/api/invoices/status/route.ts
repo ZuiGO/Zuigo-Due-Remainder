@@ -20,38 +20,57 @@ export async function POST(req: NextRequest) {
     }
 
     const previousOutstanding = invoice.outstandingAmount;
-
     let newOutstanding = invoice.outstandingAmount;
     let newAdjustment = invoice.adjustment;
+    let effectiveStatus = status;
 
-    if (status === 'Payment Received') {
+    if (status === 'Settled' || status === 'Payment Received') {
+      effectiveStatus = 'Settled';
       newOutstanding = 0;
       newAdjustment = invoice.billAmount;
 
-      // Create a payment record for the cleared amount
       if (previousOutstanding > 0) {
         await prisma.paymentRecord.create({
           data: {
             invoiceId: invoice.id,
             amountPaid: previousOutstanding,
             paymentMode: 'MANUAL_UPDATE',
-            notes: notes || 'Marked as Payment Received manually',
+            notes: notes || 'Marked as Settled in full',
           },
         });
       }
-    } else if (status === 'Pending' && previousOutstanding === 0 && invoice.billAmount > 0) {
-      // Reopening if was previously marked paid
-      newOutstanding = invoice.billAmount - invoice.adjustment;
+    } else if (status === 'Partially Settled') {
+      const settledAmount = Number(body.settledAmount);
+      if (isNaN(settledAmount) || settledAmount <= 0) {
+        return NextResponse.json({ error: 'Please provide a valid settled amount greater than 0' }, { status: 400 });
+      }
+
+      newAdjustment = Math.min(invoice.billAmount, settledAmount);
+      newOutstanding = Math.max(0, invoice.billAmount - newAdjustment);
+      effectiveStatus = newOutstanding === 0 ? 'Settled' : 'Partially Settled';
+
+      await prisma.paymentRecord.create({
+        data: {
+          invoiceId: invoice.id,
+          amountPaid: newAdjustment,
+          paymentMode: 'MANUAL_UPDATE',
+          notes: notes || `Partially settled ₹${newAdjustment.toLocaleString('en-IN')}`,
+        },
+      });
+    } else if (status === 'Pending') {
+      effectiveStatus = 'Pending';
+      newAdjustment = 0;
+      newOutstanding = invoice.billAmount;
     }
 
     const updatedInvoice = await prisma.invoice.update({
       where: { id: invoiceId },
       data: {
-        status,
+        status: effectiveStatus,
         outstandingAmount: newOutstanding,
         adjustment: newAdjustment,
-        manualOverride: status === 'Payment Received',
-        manualMarkedDate: status === 'Payment Received' ? new Date() : null,
+        manualOverride: effectiveStatus === 'Settled' || effectiveStatus === 'Partially Settled',
+        manualMarkedDate: effectiveStatus === 'Settled' || effectiveStatus === 'Partially Settled' ? new Date() : null,
         narration: notes ? `${invoice.narration || ''} | ${notes}`.trim() : invoice.narration,
       },
     });
