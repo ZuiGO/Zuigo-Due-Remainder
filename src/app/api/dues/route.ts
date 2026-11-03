@@ -84,6 +84,20 @@ export async function GET(req: NextRequest) {
           include: {
             contacts: true,
             reminderSchedules: true,
+            reminderLogs: {
+              orderBy: { dispatchedAt: 'desc' },
+              take: 20,
+              select: {
+                id: true,
+                channel: true,
+                recipient: true,
+                status: true,
+                sentDate: true,
+                dispatchedAt: true,
+                messageContent: true,
+                subject: true,
+              },
+            },
           },
         },
         payments: {

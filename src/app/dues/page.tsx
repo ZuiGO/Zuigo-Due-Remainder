@@ -18,7 +18,10 @@ import {
   Clock, 
   Filter, 
   Bell, 
-  BellOff 
+  BellOff,
+  Zap,
+  Sliders,
+  X
 } from 'lucide-react';
 
 export default function DuesPage() {
@@ -42,6 +45,10 @@ export default function DuesPage() {
     invoice: null,
     amount: '',
   });
+
+  // Reminder History Modal State
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [historyCustomer, setHistoryCustomer] = useState<any | null>(null);
 
   // Remind form states
   const [remindChannel, setRemindChannel] = useState<'WHATSAPP' | 'SMS' | 'EMAIL'>('WHATSAPP');
@@ -102,24 +109,108 @@ export default function DuesPage() {
     setActiveModal('REMIND');
   };
 
-  const handleToggleCustomerReminder = async (customerId: string, enable: boolean) => {
+  const handleUpdateFrequency = async (customerId: string, frequencyDays: number, messagesPerDay: number = 1) => {
     try {
       const res = await fetch('/api/customers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customerId,
-          reminderEnabled: enable,
+          frequencyDays,
+          messagesPerDay,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setActionMessage(enable ? 'Reminders resumed for customer' : 'Reminders stopped for customer');
+        const msgDesc = frequencyDays === 1 
+          ? `${messagesPerDay} msg${messagesPerDay > 1 ? 's' : ''}/day (Daily)`
+          : `Every ${frequencyDays} days (${messagesPerDay} msg${messagesPerDay > 1 ? 's' : ''}/day)`;
+        setActionMessage(`Reminder frequency updated: ${msgDesc}`);
+        fetchDues();
+        setTimeout(() => setActionMessage(null), 3000);
+      }
+    } catch (e: any) {
+      alert('Error updating frequency: ' + e?.message);
+    }
+  };
+
+  const handleToggleChannel = async (customerId: string, channelToToggle: string, currentChannelsStr?: string) => {
+    const raw = currentChannelsStr || 'WHATSAPP,SMS,EMAIL';
+    let channels = raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+
+    if (channels.includes(channelToToggle)) {
+      if (channels.length === 1) {
+        alert('Customer must have at least one communication channel selected.');
+        return;
+      }
+      channels = channels.filter((c) => c !== channelToToggle);
+    } else {
+      channels.push(channelToToggle);
+    }
+
+    try {
+      const res = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId,
+          channels: channels.join(','),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage(`Channels updated: ${channels.join(', ')}`);
+        fetchDues();
+        setTimeout(() => setActionMessage(null), 3000);
+      }
+    } catch (e: any) {
+      alert('Error updating channels: ' + e?.message);
+    }
+  };
+
+  const handleToggleReminderEnabled = async (customerId: string, currentEnabled: boolean) => {
+    try {
+      const res = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId,
+          reminderEnabled: !currentEnabled,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage(!currentEnabled ? 'Reminders resumed for customer' : 'Reminders stopped for customer');
         fetchDues();
         setTimeout(() => setActionMessage(null), 3000);
       }
     } catch (e: any) {
       alert('Error updating reminder status: ' + e?.message);
+    }
+  };
+
+  const handleUpdateReminderMode = async (customerId: string, mode: 'FULLY_AUTOMATED' | 'SEMI_AUTOMATED') => {
+    try {
+      const res = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId,
+          reminderMode: mode,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage(
+          mode === 'FULLY_AUTOMATED'
+            ? 'Set to Automatic: Reminders will dispatch automatically on schedule'
+            : 'Set to Semi-Automatic: Reminders require manual review/queue approval'
+        );
+        fetchDues();
+        setTimeout(() => setActionMessage(null), 3500);
+      }
+    } catch (e: any) {
+      alert('Error updating reminder mode: ' + e?.message);
     }
   };
 
@@ -337,26 +428,31 @@ export default function DuesPage() {
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold border-b border-slate-200">
+            <thead className="bg-slate-50 text-slate-500 text-[11px] uppercase font-semibold border-b border-slate-200 tracking-wider">
               <tr>
-                <th className="py-3 px-6">Customer & Contacts</th>
-                <th className="py-3 px-6">Bill No & Date</th>
-                <th className="py-3 px-6">Bill Amount (₹)</th>
-                <th className="py-3 px-6">Paid / Adjusted (₹)</th>
-                <th className="py-3 px-6 text-rose-600">Outstanding Due (₹)</th>
-                <th className="py-3 px-6">Due Date</th>
-                <th className="py-3 px-6">Payment Status</th>
-                <th className="py-3 px-6 text-right">Actions</th>
+                <th className="py-3 px-4">Customer & Contacts</th>
+                <th className="py-3 px-4">Bill No & Date</th>
+                <th className="py-3 px-4">Bill Amount (₹)</th>
+                <th className="py-3 px-4">Paid / Adjusted (₹)</th>
+                <th className="py-3 px-4 text-rose-600">Outstanding Due (₹)</th>
+                <th className="py-3 px-4">Due Date</th>
+                <th className="py-3 px-4">Payment Status</th>
+                <th className="py-3 px-4">Frequency</th>
+                <th className="py-3 px-4">Channels</th>
+                <th className="py-3 px-4">Reminder History</th>
+                <th className="py-3 px-4">Reminders Status</th>
+                <th className="py-3 px-4">Dispatch Mode</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">Loading invoices...</td>
+                  <td colSpan={13} className="py-12 text-center text-slate-400">Loading invoices...</td>
                 </tr>
               ) : invoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center">
+                  <td colSpan={13} className="py-16 text-center">
                     <div className="max-w-md mx-auto space-y-3">
                       <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300" />
                       <p className="text-sm font-bold text-slate-700">No Invoices Found</p>
@@ -376,14 +472,23 @@ export default function DuesPage() {
                     Boolean(inv.billNo?.startsWith('AD')) ||
                     Boolean(inv.billNo?.includes('CN')) ||
                     Boolean(inv.narration && /adv/i.test(inv.narration));
+                  const schedule = inv.customer?.reminderSchedules?.[0];
+                  const currentFreq = schedule?.reminder3DaysAfter ?? 3;
+                  const currentMsgsPerDay = schedule?.messagesPerDay ?? 1;
+                  const currentChannelsStr = schedule?.channels || 'WHATSAPP,SMS,EMAIL';
+                  const activeChannels = currentChannelsStr.split(',').map((s: string) => s.trim().toUpperCase());
+                  const logs = inv.customer?.reminderLogs || [];
+                  const isAuto = inv.customer?.reminderMode === 'FULLY_AUTOMATED' || !inv.customer?.reminderMode;
+                  const isEnabled = inv.customer?.reminderEnabled !== false;
+                  const isExcludedAccount = inv.actionType === 'No Action' || inv.isExcluded || inv.customer?.status === 'EXCLUDED';
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
                       {/* Customer & Contacts */}
-                      <td className="py-4 px-6 font-medium text-slate-900 max-w-xs">
+                      <td className="py-3.5 px-4 font-medium text-slate-900 max-w-xs">
                         <div>
                           <span className="font-bold">{inv.customer.partyName || inv.customer.rawLedgerName}</span>
-                          {inv.customer?.reminderEnabled === false && (
+                          {!isEnabled && (
                             <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
                               <BellOff className="w-3 h-3 text-slate-400" /> Reminders Stopped
                             </span>
@@ -410,7 +515,7 @@ export default function DuesPage() {
                       </td>
 
                       {/* Bill No & Date */}
-                      <td className="py-4 px-6 text-slate-700">
+                      <td className="py-3.5 px-4 text-slate-700 whitespace-nowrap">
                         <div className="font-mono text-xs font-bold text-indigo-700">{inv.billNo}</div>
                         <div className="text-[11px] text-slate-400 mt-0.5">
                           {new Date(inv.billDate).toLocaleDateString('en-IN', {
@@ -427,7 +532,7 @@ export default function DuesPage() {
                       </td>
 
                       {/* Bill Amount */}
-                      <td className="py-4 px-6 font-semibold text-slate-700">
+                      <td className="py-3.5 px-4 font-semibold text-slate-700 whitespace-nowrap">
                         <div>₹{inv.billAmount.toLocaleString('en-IN')}</div>
                         {isAdvance && (
                           <div className="text-[10px] text-slate-400 font-medium">Credit Voucher</div>
@@ -435,7 +540,7 @@ export default function DuesPage() {
                       </td>
 
                       {/* Paid / Adjusted */}
-                      <td className="py-4 px-6 font-semibold text-emerald-700">
+                      <td className="py-3.5 px-4 font-semibold text-emerald-700 whitespace-nowrap">
                         {inv.adjustment > 0 ? (
                           <>
                             <div>₹{inv.adjustment.toLocaleString('en-IN')}</div>
@@ -454,7 +559,7 @@ export default function DuesPage() {
                       </td>
 
                       {/* Outstanding Due (Distinct & Highlighted) */}
-                      <td className="py-4 px-6 font-black text-slate-900">
+                      <td className="py-3.5 px-4 font-black text-slate-900 whitespace-nowrap">
                         <div className={`text-sm ${inv.outstandingAmount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
                           ₹{inv.outstandingAmount.toLocaleString('en-IN')}
                         </div>
@@ -464,7 +569,7 @@ export default function DuesPage() {
                       </td>
 
                       {/* Due Date */}
-                      <td className="py-4 px-6">
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         <div className="text-xs font-semibold text-slate-800">
                           {new Date(inv.dueDate).toLocaleDateString('en-IN', {
                             day: '2-digit',
@@ -484,7 +589,7 @@ export default function DuesPage() {
                       </td>
 
                       {/* Payment Status Dropdown - Only 3 Options */}
-                      <td className="py-4 px-6">
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         {isAdvance ? (
                           <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-50 text-sky-800 border border-sky-200 inline-block">
                             Advance Received (Cr)
@@ -514,44 +619,183 @@ export default function DuesPage() {
                         )}
                       </td>
 
+                      {/* Frequency (with Messages per day) */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        {isAdvance || isExcludedAccount ? (
+                          <span className="text-[11px] text-slate-400 italic">—</span>
+                        ) : (
+                          <select
+                            value={`${currentFreq}_${currentMsgsPerDay}`}
+                            onChange={(e) => {
+                              const [f, m] = e.target.value.split('_').map(Number);
+                              handleUpdateFrequency(inv.customer.id, f, m);
+                            }}
+                            className="text-xs font-semibold py-1.5 px-2.5 rounded-xl border border-slate-200 bg-white hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer"
+                          >
+                            <optgroup label="Daily (Messages per day)">
+                              <option value="1_1">1 msg / day (Daily)</option>
+                              <option value="1_2">2 msgs / day</option>
+                              <option value="1_3">3 msgs / day</option>
+                              <option value="1_4">4 msgs / day</option>
+                              <option value="1_5">5 msgs / day</option>
+                            </optgroup>
+                            <optgroup label="Periodic Cadence">
+                              <option value="2_1">Every 2 Days (1 msg/d)</option>
+                              <option value="3_1">Every 3 Days (1 msg/d)</option>
+                              <option value="3_2">Every 3 Days (2 msgs/d)</option>
+                              <option value="7_1">Weekly (7d)</option>
+                              <option value="15_1">Every 15 Days</option>
+                              <option value="30_1">Monthly (30d)</option>
+                            </optgroup>
+                          </select>
+                        )}
+                      </td>
+
+                      {/* Channels of Messaging */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        {isAdvance || isExcludedAccount ? (
+                          <span className="text-[11px] text-slate-400 italic">—</span>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleChannel(inv.customer.id, 'WHATSAPP', currentChannelsStr)}
+                              title="Toggle WhatsApp messaging"
+                              className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
+                                activeChannels.includes('WHATSAPP')
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-sm'
+                                  : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              <Phone className="w-3 h-3" />
+                              <span>WA</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleToggleChannel(inv.customer.id, 'SMS', currentChannelsStr)}
+                              title="Toggle SMS messaging"
+                              className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
+                                activeChannels.includes('SMS')
+                                  ? 'bg-indigo-50 text-indigo-800 border-indigo-300 shadow-sm'
+                                  : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              <Send className="w-3 h-3" />
+                              <span>SMS</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleToggleChannel(inv.customer.id, 'EMAIL', currentChannelsStr)}
+                              title="Toggle Email messaging"
+                              className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
+                                activeChannels.includes('EMAIL')
+                                  ? 'bg-sky-50 text-sky-800 border-sky-300 shadow-sm'
+                                  : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              <Mail className="w-3 h-3" />
+                              <span>Mail</span>
+                            </button>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Reminder History */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHistoryCustomer(inv.customer);
+                            setHistoryModalOpen(true);
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition"
+                        >
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          <span>{logs.length} Sent</span>
+                        </button>
+                      </td>
+
+                      {/* Reminders Status */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        {isAdvance || isExcludedAccount ? (
+                          <span className="text-[11px] text-slate-400 italic">—</span>
+                        ) : isEnabled ? (
+                          <button
+                            onClick={() => handleToggleReminderEnabled(inv.customer.id, true)}
+                            title="Stop sending reminders to this customer"
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition inline-flex items-center gap-1"
+                          >
+                            <BellOff className="w-3 h-3" />
+                            <span>Stop</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleToggleReminderEnabled(inv.customer.id, false)}
+                            title="Resume sending reminders"
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition inline-flex items-center gap-1"
+                          >
+                            <Bell className="w-3 h-3" />
+                            <span>Resume</span>
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Dispatch Mode */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        {isAdvance || isExcludedAccount ? (
+                          <span className="text-[11px] text-slate-400 italic">—</span>
+                        ) : (
+                          <div className="inline-flex rounded-xl p-0.5 bg-slate-100 border border-slate-200 shadow-inner">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateReminderMode(inv.customer.id, 'FULLY_AUTOMATED')}
+                              title="Automatic: Dispatches reminders automatically on schedule without manual review"
+                              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
+                                isAuto
+                                  ? 'bg-emerald-600 text-white shadow-sm'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              <Zap className="w-3 h-3" />
+                              <span>Automatic</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateReminderMode(inv.customer.id, 'SEMI_AUTOMATED')}
+                              title="Semi-Automatic: Queues reminders for review before sending"
+                              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
+                                !isAuto
+                                  ? 'bg-indigo-600 text-white shadow-sm'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              <Sliders className="w-3 h-3" />
+                              <span>Semi-Auto</span>
+                            </button>
+                          </div>
+                        )}
+                      </td>
+
                       {/* Actions */}
-                      <td className="py-4 px-6 text-right space-x-1.5 whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-right space-x-1.5 whitespace-nowrap">
                         {isAdvance ? (
                           <span className="text-xs font-semibold text-slate-500 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
                             Advance on File
                           </span>
-                        ) : inv.actionType === 'No Action' || inv.isExcluded || inv.customer?.status === 'EXCLUDED' ? (
+                        ) : isExcludedAccount ? (
                           <span className="text-[11px] font-semibold text-slate-400 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
                             Internal / Tax (No Reminders)
                           </span>
                         ) : (
-                          <>
-                            <button
-                              onClick={() => handleOpenRemind(inv)}
-                              title="Send reminder via WhatsApp, SMS, or Email"
-                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition inline-flex items-center gap-1 shadow-sm"
-                            >
-                              <Send className="w-3 h-3" /> Remind
-                            </button>
-
-                            {inv.customer?.reminderEnabled !== false ? (
-                              <button
-                                onClick={() => handleToggleCustomerReminder(inv.customer.id, false)}
-                                title="Stop sending reminders to this customer"
-                                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition inline-flex items-center gap-1"
-                              >
-                                <BellOff className="w-3 h-3" /> Stop Reminders
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => handleToggleCustomerReminder(inv.customer.id, true)}
-                                title="Resume sending reminders to this customer"
-                                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition inline-flex items-center gap-1"
-                              >
-                                <Bell className="w-3 h-3" /> Resume Reminders
-                              </button>
-                            )}
-                          </>
+                          <button
+                            onClick={() => handleOpenRemind(inv)}
+                            title="Send reminder via WhatsApp, SMS, or Email"
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition inline-flex items-center gap-1 shadow-sm"
+                          >
+                            <Send className="w-3 h-3" /> Remind
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -847,6 +1091,101 @@ export default function DuesPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: REMINDER HISTORY MODAL */}
+      {historyModalOpen && historyCustomer && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    Reminder History
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {historyCustomer.partyName || historyCustomer.rawLedgerName} {historyCustomer.ledgerCode ? `(Ledger: ${historyCustomer.ledgerCode})` : ''}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setHistoryModalOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 font-bold"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-3 flex-1">
+              {(!historyCustomer.reminderLogs || historyCustomer.reminderLogs.length === 0) ? (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  <Clock className="w-8 h-8 mx-auto text-slate-300 mb-2" />
+                  No reminder dispatches recorded for this customer yet.
+                </div>
+              ) : (
+                historyCustomer.reminderLogs.map((log: any) => {
+                  const channelBadge =
+                    log.channel === 'WHATSAPP' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <Phone className="w-3 h-3 text-emerald-600" /> WhatsApp
+                      </span>
+                    ) : log.channel === 'SMS' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                        <Send className="w-3 h-3 text-indigo-600" /> SMS Text
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-800 border border-sky-200">
+                        <Mail className="w-3 h-3 text-sky-600" /> Email
+                      </span>
+                    );
+
+                  return (
+                    <div
+                      key={log.id}
+                      className="p-3.5 rounded-2xl border border-slate-200 bg-white shadow-sm space-y-2 hover:border-slate-300 transition"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                        <div className="flex items-center gap-2">
+                          {channelBadge}
+                          <span className="text-[11px] font-mono text-slate-500">{log.recipient}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                            log.status === 'SENT' || log.status === 'DELIVERED'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {log.status}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-medium">
+                            {new Date(log.dispatchedAt).toLocaleString('en-IN', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {log.subject && (
+                        <div className="text-xs font-bold text-slate-800">
+                          Subject: {log.subject}
+                        </div>
+                      )}
+
+                      <p className="text-xs text-slate-600 whitespace-pre-wrap bg-slate-50 p-2.5 rounded-xl border border-slate-100 leading-relaxed font-sans">
+                        {log.messageContent}
+                      </p>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}

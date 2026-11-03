@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
       pauseNote,
       reminderMode,
       frequencyDays,
+      messagesPerDay,
       channels,
     } = body;
 
@@ -81,8 +82,8 @@ export async function POST(req: NextRequest) {
       updateData.reminderMode = reminderMode;
     }
 
-    // Handle Frequency and Channels in ReminderSchedule
-    if (frequencyDays !== undefined || channels !== undefined) {
+    // Handle Frequency, Messages Per Day, and Channels in ReminderSchedule
+    if (frequencyDays !== undefined || messagesPerDay !== undefined || channels !== undefined) {
       const existingSchedule = await prisma.reminderSchedule.findFirst({
         where: { customerId },
       });
@@ -92,6 +93,7 @@ export async function POST(req: NextRequest) {
           where: { id: existingSchedule.id },
           data: {
             reminder3DaysAfter: frequencyDays !== undefined ? Number(frequencyDays) : existingSchedule.reminder3DaysAfter,
+            messagesPerDay: messagesPerDay !== undefined ? Number(messagesPerDay) : existingSchedule.messagesPerDay,
             channels: channels !== undefined ? String(channels) : existingSchedule.channels,
           },
         });
@@ -100,6 +102,7 @@ export async function POST(req: NextRequest) {
           data: {
             customerId,
             reminder3DaysAfter: frequencyDays !== undefined ? Number(frequencyDays) : 3,
+            messagesPerDay: messagesPerDay !== undefined ? Number(messagesPerDay) : 1,
             channels: channels !== undefined ? String(channels) : 'WHATSAPP,SMS,EMAIL',
           },
         });

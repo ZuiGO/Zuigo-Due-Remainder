@@ -234,6 +234,7 @@ model ReminderSchedule {
   maxRemindersBeforeFlag Int       @default(5)
   channels               String    @default("WHATSAPP,SMS,EMAIL")
   autoReminderEnabled    Boolean   @default(true)
+  messagesPerDay         Int       @default(1)
   isActive               Boolean   @default(true)
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt

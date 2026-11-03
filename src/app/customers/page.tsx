@@ -93,7 +93,7 @@ export default function CustomersPage() {
     }
   };
 
-  const handleUpdateFrequency = async (customerId: string, frequencyDays: number) => {
+  const handleUpdateFrequency = async (customerId: string, frequencyDays: number, messagesPerDay: number = 1) => {
     try {
       const res = await fetch('/api/customers', {
         method: 'POST',
@@ -101,11 +101,15 @@ export default function CustomersPage() {
         body: JSON.stringify({
           customerId,
           frequencyDays,
+          messagesPerDay,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setNotification(`Reminder frequency updated to every ${frequencyDays === 1 ? 'day' : `${frequencyDays} days`}`);
+        const msgDesc = frequencyDays === 1 
+          ? `${messagesPerDay} msg${messagesPerDay > 1 ? 's' : ''}/day (Daily)`
+          : `Every ${frequencyDays} days (${messagesPerDay} msg${messagesPerDay > 1 ? 's' : ''}/day)`;
+        setNotification(`Reminder frequency updated: ${msgDesc}`);
         fetchCustomers();
         setTimeout(() => setNotification(null), 3000);
       }
@@ -426,7 +430,8 @@ export default function CustomersPage() {
                 filtered.map((c) => {
                   const hasValidContact = c.contacts && c.contacts.some((ct: any) => ct.mobileNumber || ct.emailId);
                   const schedule = c.reminderSchedules?.[0];
-                  const currentFreq = schedule?.reminder3DaysAfter || 3;
+                  const currentFreq = schedule?.reminder3DaysAfter ?? 3;
+                  const currentMsgsPerDay = schedule?.messagesPerDay ?? 1;
                   const currentChannelsStr = schedule?.channels || 'WHATSAPP,SMS,EMAIL';
                   const activeChannels = currentChannelsStr.split(',').map((s: string) => s.trim().toUpperCase());
                   const logs = c.reminderLogs || [];
@@ -516,18 +521,31 @@ export default function CustomersPage() {
                         </div>
                       </td>
 
-                      {/* 4. Configure Frequency */}
+                      {/* 4. Configure Frequency (with Messages per day) */}
                       <td className="py-3.5 px-4">
                         <select
-                          value={currentFreq}
-                          onChange={(e) => handleUpdateFrequency(c.id, Number(e.target.value))}
+                          value={`${currentFreq}_${currentMsgsPerDay}`}
+                          onChange={(e) => {
+                            const [f, m] = e.target.value.split('_').map(Number);
+                            handleUpdateFrequency(c.id, f, m);
+                          }}
                           className="text-xs font-semibold py-1.5 px-2.5 rounded-xl border border-slate-200 bg-white hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer"
                         >
-                          <option value={1}>Daily</option>
-                          <option value={3}>Every 3 Days</option>
-                          <option value={7}>Weekly (7d)</option>
-                          <option value={15}>Every 15 Days</option>
-                          <option value={30}>Monthly (30d)</option>
+                          <optgroup label="Daily (Messages per day)">
+                            <option value="1_1">1 msg / day (Daily)</option>
+                            <option value="1_2">2 msgs / day</option>
+                            <option value="1_3">3 msgs / day</option>
+                            <option value="1_4">4 msgs / day</option>
+                            <option value="1_5">5 msgs / day</option>
+                          </optgroup>
+                          <optgroup label="Periodic Cadence">
+                            <option value="2_1">Every 2 Days (1 msg/d)</option>
+                            <option value="3_1">Every 3 Days (1 msg/d)</option>
+                            <option value="3_2">Every 3 Days (2 msgs/d)</option>
+                            <option value="7_1">Weekly (7d)</option>
+                            <option value="15_1">Every 15 Days</option>
+                            <option value="30_1">Monthly (30d)</option>
+                          </optgroup>
                         </select>
                       </td>
 
