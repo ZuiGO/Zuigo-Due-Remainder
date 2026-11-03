@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { integrations = [], schedule, tenant: tenantData, newTenant } = body;
 
-    // RBAC Security Check: Only ADMINs can provision new organizations or alter white-label branding
+    // RBAC Security Check: Only ADMINs can provision new organizations
     if (newTenant && !isAdmin) {
       return NextResponse.json(
         { error: 'Forbidden: Only administrators can onboard or provision new organizations.' },
@@ -60,15 +60,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (tenantData && !isAdmin) {
-      return NextResponse.json(
-        { error: 'Forbidden: Only administrators can modify organization white-label branding and bank accounts.' },
-        { status: 403 }
-      );
-    }
-
     // 1. Create new tenant if requested (Admin only)
-    if (newTenant && newTenant.slug && newTenant.companyName) {
+    if (newTenant && newTenant.slug && newTenant.companyName && isAdmin) {
       const cleanSlug = newTenant.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
       await prisma.tenant.upsert({
         where: { slug: cleanSlug },
@@ -89,7 +82,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Update active tenant white-label branding & bank details (Admin only)
-    if (tenantData && tenantData.id) {
+    if (tenantData && tenantData.id && isAdmin) {
       await prisma.tenant.update({
         where: { id: tenantData.id },
         data: {
@@ -153,7 +146,7 @@ export async function POST(req: NextRequest) {
         reminder5DaysAfter: Number(schedule.reminder5DaysAfter ?? 15),
         maxRemindersBeforeFlag: Number(schedule.maxRemindersBeforeFlag ?? 5),
         channels: schedule.channels || 'WHATSAPP,SMS,EMAIL',
-        autoReminderEnabled: schedule.autoReminderEnabled ?? true,
+        autoReminderEnabled: Boolean(schedule.autoReminderEnabled),
       };
 
       if (existing) {

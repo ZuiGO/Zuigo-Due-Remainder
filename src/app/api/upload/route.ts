@@ -139,20 +139,9 @@ export async function POST(req: NextRequest) {
       diffSummary = res; // Keeps latest diff summary
     }
 
-    // 5. Default Autonomous Agent Execution:
-    // If autoReminderEnabled is true (default ON), automatically scan due/overdue bills and dispatch consolidated digests
-    const schedule = await prisma.reminderSchedule.findFirst({
-      where: { customerId: null },
-    });
-    const autoDispatchActive = schedule?.autoReminderEnabled ?? true;
-
-    if (autoDispatchActive && duesFiles.length > 0) {
-      try {
-        autoDispatchSummary = await executeTenantDigestRun(tenant.id);
-      } catch (err: any) {
-        console.error('Auto-dispatch error on import:', err);
-      }
-    }
+    // 5. Excel Upload is strictly for ingestion, diffing, and reconciliation.
+    // Automated or manual reminders are NEVER dispatched on upload to avoid accidental messaging.
+    // Users can review dues and dispatch reminders via the Dues/Customer controls or automated cron.
 
     // 6. Build unified confirmation message for single or simultaneous dual-file upload
     const msgParts: string[] = [];

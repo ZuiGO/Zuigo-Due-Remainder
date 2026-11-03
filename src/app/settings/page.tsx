@@ -29,7 +29,7 @@ export default function SettingsPage() {
     reminder5DaysAfter: 15,
     maxRemindersBeforeFlag: 5,
     channels: 'WHATSAPP,SMS,EMAIL',
-    autoReminderEnabled: true,
+    autoReminderEnabled: false,
   });
 
   // Tenant / White-Label State
@@ -114,7 +114,7 @@ export default function SettingsPage() {
             reminder5DaysAfter: data.schedule.reminder5DaysAfter ?? 15,
             maxRemindersBeforeFlag: data.schedule.maxRemindersBeforeFlag ?? 5,
             channels: data.schedule.channels || 'WHATSAPP,SMS,EMAIL',
-            autoReminderEnabled: data.schedule.autoReminderEnabled ?? true,
+            autoReminderEnabled: data.schedule.autoReminderEnabled ?? false,
           });
         }
 
@@ -211,6 +211,33 @@ export default function SettingsPage() {
       alert('Error saving settings: ' + e?.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleAutoReminder = async (enabled: boolean) => {
+    setSchedule((prev) => ({ ...prev, autoReminderEnabled: enabled }));
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schedule: {
+            ...schedule,
+            autoReminderEnabled: enabled,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSaveMsg(
+          enabled
+            ? 'Autonomous reminders enabled.'
+            : 'Autonomous reminders disabled. No messages will be sent automatically.'
+        );
+        setTimeout(() => setSaveMsg(null), 3500);
+      }
+    } catch (err: any) {
+      console.error('Error toggling auto reminders:', err);
     }
   };
 
@@ -389,9 +416,7 @@ export default function SettingsPage() {
               <input
                 type="checkbox"
                 checked={schedule.autoReminderEnabled}
-                onChange={(e) =>
-                  setSchedule({ ...schedule, autoReminderEnabled: e.target.checked })
-                }
+                onChange={(e) => handleToggleAutoReminder(e.target.checked)}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>

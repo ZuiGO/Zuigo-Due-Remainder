@@ -345,6 +345,10 @@ export async function reconcileDailySapExport(
   };
 }
 
+function normalizeName(name: string): string {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 /**
  * Ingests Customer Contacts Master and attaches contacts to customers.
  * Supports joins on either explicit Ledger Code OR Customer/Party Name.
@@ -370,30 +374,35 @@ export async function ingestCustomerContacts(
       });
     }
 
-    // 2. Fallback: match by partyName / rawLedgerName
+    // 2. Match by exact partyName / rawLedgerName
     if (!customer && ct.partyName) {
       customer = await prisma.customer.findFirst({
         where: {
           tenantId,
           OR: [
-            { partyName: { equals: ct.partyName, mode: 'insensitive' } },
-            { rawLedgerName: { equals: ct.partyName, mode: 'insensitive' } },
+            { partyName: { equals: ct.partyName.trim(), mode: 'insensitive' } },
+            { rawLedgerName: { equals: ct.partyName.trim(), mode: 'insensitive' } },
           ],
         },
       });
 
-      // 2b. Prefix match on core company name (e.g. "Parason Machinery" matches "Parason Machinery Pvt Ltd")
+      // 2b. Secondary normalized match (ignoring whitespace/case/brackets)
       if (!customer) {
-        const corePrefix = ct.partyName.split(/[\(\/]/)[0].trim();
-        if (corePrefix.length >= 4) {
-          customer = await prisma.customer.findFirst({
-            where: {
-              tenantId,
-              OR: [
-                { partyName: { startsWith: corePrefix, mode: 'insensitive' } },
-                { rawLedgerName: { startsWith: corePrefix, mode: 'insensitive' } },
-              ],
-            },
+        const normalizedTarget = normalizeName(ct.partyName);
+        const candidates = await prisma.customer.findMany({
+          where: { tenantId },
+          select: { id: true, partyName: true, rawLedgerName: true },
+        });
+
+        const matchedCandidate = candidates.find(
+          c =>
+            normalizeName(c.partyName || '') === normalizedTarget ||
+            normalizeName(c.rawLedgerName || '') === normalizedTarget
+        );
+
+        if (matchedCandidate) {
+          customer = await prisma.customer.findUnique({
+            where: { id: matchedCandidate.id },
           });
         }
       }
