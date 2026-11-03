@@ -16,30 +16,29 @@ const duesHeaders = [
   'Narration'
 ];
 
-// YESTERDAY: 5 Entries (02-Nov-2026 Baseline)
-// All 5 have verified contacts in Contact Master, 0 TDS, 0 utility bills
-const yesterdayRows = [
+// YESTERDAY: 5 Entries (02-Nov-2026 Baseline) + Grand Total
+const yesterdayEntries = [
   ['262908375', 'INDO GERMAN TOOL ROOM', 'ABMATO', 'AMT/2026-27/0007', '23-04-2026', '23-04-2026', 24802.00, 0, 24802.00, 'Carbide inserts set A'],
   ['833549088', 'S S CONTROLS', 'ABMATO', 'AMT/2026-27/0101', '30-10-2026', '30-10-2026', 9416.00, 0, 9416.00, 'Relay board units'],
   ['961866379', 'EQUINOX GAUGES', 'ABMATO', 'AMT/2026-27/0091', '10-10-2026', '10-10-2026', 3328.00, 0, 3328.00, 'Calibration gauge set'],
-  ['947581601', 'MIKRONIX GAUGES PRIVATE LIMITED', 'ABMATO', 'AMT/2026-27/0029', '11-06-2026', '11-06-2026', 1764.00, 1655, 109.00, 'Agst: AMT/2026-27/0028, Adv: AD0010'],
+  ['947581601', 'MIKRONIX GAUGES PRIVATE LIMITED', 'ABMATO', 'AMT/2026-27/0029', '11-06-2026', '11-06-2026', 1764.00, 1655.00, 109.00, 'Agst: AMT/2026-27/0028, Adv: AD0010'],
   ['782921253', 'S K ENGINEERING ENTERPRISES', 'ABMATO', 'AMT/2026-27/0061', '24-08-2026', '24-08-2026', 413.00, 0, 413.00, 'Lathe cutting tool bits']
 ];
 
-// TODAY: 5 Entries (03-Nov-2026 Updated)
-// Demonstrates daily diff reconciliation:
-// 1. Indo German Tool Room: Partial payment of ₹10,000 received (Outstanding: ₹24,802 -> ₹14,802)
-// 2. S S Controls: Unchanged (Outstanding: ₹9,416)
-// 3. Equinox Gauges: Bill AMT/2026-27/0091 cleared in full (Adjustment: ₹3,328, Outstanding: ₹0)
-// 4. Mikronix Gauges: Unchanged (Outstanding: ₹109)
-// 5. Indo German Tool Room: Brand new invoice AMT/2026-27/0104 generated today for ₹18,500
-const todayRows = [
+const yesterdayTotalRow = ['Grand Total', '', '', '', '', '', 39723.00, 1655.00, 38068.00, ''];
+const yesterdayRows = [...yesterdayEntries, yesterdayTotalRow];
+
+// TODAY: 5 Entries (03-Nov-2026 Updated) + Grand Total
+const todayEntries = [
   ['262908375', 'INDO GERMAN TOOL ROOM', 'ABMATO', 'AMT/2026-27/0007', '23-04-2026', '23-04-2026', 24802.00, 10000.00, 14802.00, 'Carbide inserts set A - Partial payment ₹10,000 received'],
   ['833549088', 'S S CONTROLS', 'ABMATO', 'AMT/2026-27/0101', '30-10-2026', '30-10-2026', 9416.00, 0, 9416.00, 'Relay board units'],
   ['961866379', 'EQUINOX GAUGES', 'ABMATO', 'AMT/2026-27/0091', '10-10-2026', '10-10-2026', 3328.00, 3328.00, 0.00, 'Calibration gauge set - Fully settled today'],
-  ['947581601', 'MIKRONIX GAUGES PRIVATE LIMITED', 'ABMATO', 'AMT/2026-27/0029', '11-06-2026', '11-06-2026', 1764.00, 1655, 109.00, 'Agst: AMT/2026-27/0028, Adv: AD0010'],
+  ['947581601', 'MIKRONIX GAUGES PRIVATE LIMITED', 'ABMATO', 'AMT/2026-27/0029', '11-06-2026', '11-06-2026', 1764.00, 1655.00, 109.00, 'Agst: AMT/2026-27/0028, Adv: AD0010'],
   ['262908375', 'INDO GERMAN TOOL ROOM', 'ABMATO', 'AMT/2026-27/0104', '03-11-2026', '17-11-2026', 18500.00, 0, 18500.00, 'CNC milling spare set - New invoice generated 03-Nov-2026']
 ];
+
+const todayTotalRow = ['Grand Total', '', '', '', '', '', 57810.00, 14983.00, 42827.00, ''];
+const todayRows = [...todayEntries, todayTotalRow];
 
 // Matching Contact Master (10 columns, only these parties)
 const contactHeaders = [
@@ -88,6 +87,32 @@ function toCsv(headers, rows) {
   }).join(',')).join('\r\n');
 }
 
+function safeWriteXlsx(wb, filePath) {
+  try {
+    XLSX.writeFile(wb, filePath);
+    console.log('Written:', filePath);
+  } catch (err) {
+    if (err.code === 'EBUSY') {
+      const altPath = filePath.replace('.xlsx', '_Totals.xlsx');
+      XLSX.writeFile(wb, altPath);
+      console.log('File locked by Excel. Written alternate:', altPath);
+    } else {
+      console.error('Error writing', filePath, err.message);
+    }
+  }
+}
+
+function safeWriteCsv(content, filePath) {
+  try {
+    fs.writeFileSync(filePath, content, 'utf8');
+  } catch (err) {
+    if (err.code === 'EBUSY') {
+      const altPath = filePath.replace('.csv', '_Totals.csv');
+      fs.writeFileSync(altPath, content, 'utf8');
+    }
+  }
+}
+
 const targetDirs = [
   path.join(__dirname, '..', 'demo_files'),
   path.join(__dirname, '..', 'public', 'demo-files'),
@@ -96,21 +121,26 @@ const targetDirs = [
 
 targetDirs.forEach(d => {
   if (fs.existsSync(d)) {
-    // 1. Yesterday 5-entry dues
+    // 1. Yesterday 5-entry dues with Grand Total
     const yesterdayWb = makeWorkbook('Outstanding Receivables', duesHeaders, yesterdayRows);
-    XLSX.writeFile(yesterdayWb, path.join(d, 'Demo_Dues_Yesterday_5_Entries.xlsx'));
-    fs.writeFileSync(path.join(d, 'Demo_Dues_Yesterday_5_Entries.csv'), toCsv(duesHeaders, yesterdayRows), 'utf8');
+    safeWriteXlsx(yesterdayWb, path.join(d, 'Demo_Dues_Yesterday_5_Entries.xlsx'));
+    safeWriteCsv(toCsv(duesHeaders, yesterdayRows), path.join(d, 'Demo_Dues_Yesterday_5_Entries.csv'));
 
-    // 2. Today 5-entry dues
+    // 2. Today 5-entry dues with Grand Total
     const todayWb = makeWorkbook('Outstanding Receivables', duesHeaders, todayRows);
-    XLSX.writeFile(todayWb, path.join(d, 'Demo_Dues_Today_5_Entries.xlsx'));
-    fs.writeFileSync(path.join(d, 'Demo_Dues_Today_5_Entries.csv'), toCsv(duesHeaders, todayRows), 'utf8');
+    safeWriteXlsx(todayWb, path.join(d, 'Demo_Dues_Today_5_Entries.xlsx'));
+    safeWriteCsv(toCsv(duesHeaders, todayRows), path.join(d, 'Demo_Dues_Today_5_Entries.csv'));
 
-    // 3. Matching contacts
+    // 3. Demo Dues 5-entries (baseline with Grand Total)
+    const duesWb = makeWorkbook('Outstanding Receivables', duesHeaders, yesterdayRows);
+    safeWriteXlsx(duesWb, path.join(d, 'Demo_Dues_5_Entries.xlsx'));
+    safeWriteCsv(toCsv(duesHeaders, yesterdayRows), path.join(d, 'Demo_Dues_5_Entries.csv'));
+
+    // 4. Matching contacts
     const contactWb = makeWorkbook('Customer Contact Master', contactHeaders, contactRows);
-    XLSX.writeFile(contactWb, path.join(d, 'Demo_Contacts_5_Entries.xlsx'));
-    fs.writeFileSync(path.join(d, 'Demo_Contacts_5_Entries.csv'), toCsv(contactHeaders, contactRows), 'utf8');
+    safeWriteXlsx(contactWb, path.join(d, 'Demo_Contacts_5_Entries.xlsx'));
+    safeWriteCsv(toCsv(contactHeaders, contactRows), path.join(d, 'Demo_Contacts_5_Entries.csv'));
 
-    console.log('Saved Yesterday, Today & Contacts in:', d);
+    console.log('Saved Yesterday, Today & Contacts (with Total row) in:', d);
   }
 });
