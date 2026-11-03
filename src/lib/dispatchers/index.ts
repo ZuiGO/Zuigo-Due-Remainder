@@ -68,10 +68,10 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     isSandbox: forceSandbox,
   } = req;
 
-  // 1. Resolve Target Recipient (uses test override if sandbox/test mode)
+  // 1. Initial recipient placeholder (Email strictly locked to jayesh@zuigo.ai)
   let effectiveRecipient =
     channel === 'EMAIL'
-      ? recipient || OVERRIDE_TARGET_EMAIL
+      ? OVERRIDE_TARGET_EMAIL
       : recipient || OVERRIDE_TARGET_PHONE;
 
   const actionUrl = buildChannelActionUrl(channel, messageContent, subject);
@@ -98,10 +98,13 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
   const isSandbox =
     forceSandbox !== undefined ? forceSandbox : (integration?.isSandbox ?? true);
 
-  // In Sandbox mode, always route to verified test destinations
-  if (isSandbox) {
-    effectiveRecipient =
-      channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE;
+  // Email destinations are strictly locked to jayesh@zuigo.ai for all email config tests
+  if (channel === 'EMAIL') {
+    effectiveRecipient = OVERRIDE_TARGET_EMAIL;
+  } else if (isSandbox) {
+    effectiveRecipient = OVERRIDE_TARGET_PHONE;
+  } else {
+    effectiveRecipient = recipient || OVERRIDE_TARGET_PHONE;
   }
 
   let config: Record<string, any> = {};

@@ -5,11 +5,24 @@ import { runAutomatedReminderCheck } from '../lib/worker.ts';
 
 describe('Automated Reminder Worker & Defaulter Flagging Integration Test', () => {
   it('should run automated reminder check and evaluate active invoices', async () => {
+    // Ensure default pilot tenant exists
+    const tenant = await prisma.tenant.upsert({
+      where: { slug: 'abmato' },
+      update: {},
+      create: {
+        slug: 'abmato',
+        companyName: 'Abhiyadna Machine Tools',
+        brandColor: '#4f46e5',
+      },
+    });
+
     // Create temporary test customer and invoice
     const customer = await prisma.customer.create({
       data: {
+        tenantId: tenant.id,
+        ledgerCode: 'TEST-DEFAULTER-001',
         rawLedgerName: 'Test Tech Defaulter Pvt Ltd',
-        normalizedName: 'TEST TECH DEFAULTER PVT LTD',
+        partyName: 'TEST TECH DEFAULTER PVT LTD',
         status: 'ACTIVE',
         consecutiveRemindersCount: 4,
         totalOutstanding: 50000,
@@ -23,6 +36,8 @@ describe('Automated Reminder Worker & Defaulter Flagging Integration Test', () =
         },
         invoices: {
           create: {
+            tenantId: tenant.id,
+            ledgerCode: 'TEST-DEFAULTER-001',
             billNo: 'INV-TEST-001',
             billDate: new Date('2024-01-01'),
             dueDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days overdue (matches cadence T+3)

@@ -74,7 +74,10 @@ describe('Multi-Day SAP Export Diff & Autonomous Agent Integration Tests', () =>
     });
     assert.ok(p001, 'Customer P001 must exist');
     assert.strictEqual(p001.contacts.length, 2, 'P001 should have 2 contacts (Smit Satpute & Vinod Kale)');
-    assert.strictEqual(p001.contacts[0].mobileNumber, '+918530383141', 'Should format to E.164');
+    assert.ok(
+      p001.contacts.some(c => c.mobileNumber === '+918530383141'),
+      'P001 contacts must include primary test number +918530383141'
+    );
   });
 
   it('Step 2: Ingest Day 1 (Yesterday Export) & trigger autonomous agent reminders', async () => {

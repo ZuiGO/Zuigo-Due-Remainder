@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
+import { verifySessionToken } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
   try {
+    const token = req.cookies.get('zuigo_session')?.value;
+    const sessionUser = token ? verifySessionToken(token) : null;
+    const isAdmin = sessionUser?.role === 'ADMIN';
+
     const integrations = await prisma.integrationSetting.findMany();
     const schedule = await prisma.reminderSchedule.findFirst({
       where: { customerId: null },
@@ -12,15 +17,18 @@ export async function GET(req: NextRequest) {
       where: { slug: 'abmato' },
     });
 
-    const allTenants = await prisma.tenant.findMany({
-      select: {
-        id: true,
-        slug: true,
-        companyName: true,
-        brandColor: true,
-        logoUrl: true,
-      },
-    });
+    // Multi-tenant directory is exclusively visible to Administrators
+    const allTenants = isAdmin
+      ? await prisma.tenant.findMany({
+          select: {
+            id: true,
+            slug: true,
+            companyName: true,
+            brandColor: true,
+            logoUrl: true,
+          },
+        })
+      : [];
 
     return NextResponse.json({
       success: true,
@@ -28,6 +36,7 @@ export async function GET(req: NextRequest) {
       schedule,
       tenant: activeTenant,
       allTenants,
+      isAdmin,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
@@ -36,10 +45,29 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const token = req.cookies.get('zuigo_session')?.value;
+    const sessionUser = token ? verifySessionToken(token) : null;
+    const isAdmin = sessionUser?.role === 'ADMIN';
+
     const body = await req.json();
     const { integrations = [], schedule, tenant: tenantData, newTenant } = body;
 
-    // 1. Create new tenant if requested
+    // RBAC Security Check: Only ADMINs can provision new organizations or alter white-label branding
+    if (newTenant && !isAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Only administrators can onboard or provision new organizations.' },
+        { status: 403 }
+      );
+    }
+
+    if (tenantData && !isAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Only administrators can modify organization white-label branding and bank accounts.' },
+        { status: 403 }
+      );
+    }
+
+    // 1. Create new tenant if requested (Admin only)
     if (newTenant && newTenant.slug && newTenant.companyName) {
       const cleanSlug = newTenant.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
       await prisma.tenant.upsert({
@@ -60,7 +88,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Update active tenant white-label branding & bank details
+    // 2. Update active tenant white-label branding & bank details (Admin only)
     if (tenantData && tenantData.id) {
       await prisma.tenant.update({
         where: { id: tenantData.id },

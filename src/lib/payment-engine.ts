@@ -211,3 +211,41 @@ export async function recordPartialPaymentWithPromise(
       : `Payment of ₹${amountPaid.toLocaleString('en-IN')} received. Remainder of ₹${promisedAmount.toLocaleString('en-IN')} committed for ${formattedDate}. Reminders paused until then.`,
   };
 }
+
+/**
+ * Evaluates changes in customer ledger balance across import cycles.
+ */
+export function reconcileLedgerBalanceChange(
+  previousBalance: number,
+  newBalance: number,
+  balanceType: 'Dr' | 'Cr' = 'Dr'
+): {
+  action: 'SETTLED' | 'PAYMENT_DETECTED' | 'NO_CHANGE' | 'INCREASED';
+  detectedPaymentAmount: number;
+} {
+  if (newBalance <= 0 || balanceType === 'Cr') {
+    return {
+      action: 'SETTLED',
+      detectedPaymentAmount: previousBalance,
+    };
+  }
+
+  if (newBalance < previousBalance) {
+    return {
+      action: 'PAYMENT_DETECTED',
+      detectedPaymentAmount: previousBalance - newBalance,
+    };
+  }
+
+  if (newBalance > previousBalance) {
+    return {
+      action: 'INCREASED',
+      detectedPaymentAmount: 0,
+    };
+  }
+
+  return {
+    action: 'NO_CHANGE',
+    detectedPaymentAmount: 0,
+  };
+}

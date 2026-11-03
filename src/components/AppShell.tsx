@@ -225,22 +225,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           Top Right: ZuiGO Logo (Click opens https://zuigo.ai/)
         */}
         <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-8 py-3 flex items-center justify-between shadow-xs">
-          <div className="flex items-center gap-3">
-            {/* Top Left Mini Pill for Abhiyadna */}
-            <a
-              href="https://abhiyadnamt.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Abhiyadna Machine Tools"
-              className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/80 transition border border-slate-200/60 text-xs font-semibold text-slate-800 group"
-            >
-              <img src="/amt-logo.png" alt="AMT" className="w-4 h-4 object-contain rounded" />
-              <span>Abhiyadna Machine Tools</span>
-              <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-indigo-600 transition" />
-            </a>
+          <div className="flex items-center gap-2.5">
+            <span className="font-extrabold text-sm text-slate-800 tracking-tight">Payment Follow-up Automation</span>
             <span className="text-slate-300 hidden md:inline">•</span>
             <span className="text-xs text-slate-500 font-medium hidden md:inline">
-              Payment Follow-up Automation
+              Enterprise Dues Recovery
             </span>
           </div>
 

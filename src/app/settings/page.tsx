@@ -33,6 +33,9 @@ export default function SettingsPage() {
   });
 
   // Tenant / White-Label State
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const isAdmin = currentUser?.role === 'ADMIN';
+
   const [tenant, setTenant] = useState<any>({
     companyName: 'Abhiyadna Machine Tools',
     brandColor: '#4f46e5',
@@ -152,6 +155,15 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
+    fetch('/api/auth/me')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.authenticated && data.user) {
+          setCurrentUser(data.user);
+        }
+      })
+      .catch((err) => console.error('Failed to load user session:', err));
+
     fetchSettings();
   }, []);
 
@@ -395,18 +407,26 @@ export default function SettingsPage() {
               <div>
                 <h3 className="font-bold text-sm text-slate-900">Organization & White-Label Branding</h3>
                 <p className="text-[11px] text-slate-500">
-                  Customized per client. Injects company name and bank transfer details into all reminder templates.
+                  {isAdmin
+                    ? 'Administrator Access: Configure white-labeling, bank accounts, and onboard client organizations.'
+                    : `Active Organization: ${tenant.companyName}. Multi-tenant settings are restricted to Administrators.`}
                 </p>
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowNewTenantModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-semibold transition"
-            >
-              <Plus className="w-3.5 h-3.5" /> Onboard New Organization
-            </button>
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={() => setShowNewTenantModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-semibold transition"
+              >
+                <Plus className="w-3.5 h-3.5" /> Onboard New Organization
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-semibold border border-slate-200">
+                Tenant: {tenant.companyName} (Admin Managed)
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -415,9 +435,10 @@ export default function SettingsPage() {
               <input
                 type="text"
                 required
+                disabled={!isAdmin}
                 value={tenant.companyName || ''}
                 onChange={(e) => setTenant({ ...tenant, companyName: e.target.value })}
-                className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
               />
               <p className="text-[10px] text-slate-400 mt-0.5">Appears in header and reminder copy</p>
             </div>
@@ -427,15 +448,17 @@ export default function SettingsPage() {
               <div className="flex items-center gap-2">
                 <input
                   type="color"
+                  disabled={!isAdmin}
                   value={tenant.brandColor || '#4f46e5'}
                   onChange={(e) => setTenant({ ...tenant, brandColor: e.target.value })}
-                  className="w-9 h-9 rounded-lg border border-slate-300 cursor-pointer p-0.5"
+                  className="w-9 h-9 rounded-lg border border-slate-300 cursor-pointer p-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <input
                   type="text"
+                  disabled={!isAdmin}
                   value={tenant.brandColor || '#4f46e5'}
                   onChange={(e) => setTenant({ ...tenant, brandColor: e.target.value })}
-                  className="w-28 text-xs font-mono px-3 py-2 rounded-xl border border-slate-300 font-semibold"
+                  className="w-28 text-xs font-mono px-3 py-2 rounded-xl border border-slate-300 font-semibold disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
                 />
                 <span className="text-[11px] text-slate-400">Primary UI & badge color</span>
               </div>
@@ -454,10 +477,11 @@ export default function SettingsPage() {
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">Bank Name</label>
                 <input
                   type="text"
+                  disabled={!isAdmin}
                   value={tenant.bankName || ''}
                   onChange={(e) => setTenant({ ...tenant, bankName: e.target.value })}
                   placeholder="e.g. HDFC Bank"
-                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -465,10 +489,11 @@ export default function SettingsPage() {
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">Account Number</label>
                 <input
                   type="text"
+                  disabled={!isAdmin}
                   value={tenant.bankAccountNo || ''}
                   onChange={(e) => setTenant({ ...tenant, bankAccountNo: e.target.value })}
                   placeholder="e.g. 50200012345678"
-                  className="w-full text-xs font-mono px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
+                  className="w-full text-xs font-mono px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -476,10 +501,11 @@ export default function SettingsPage() {
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">IFSC Code</label>
                 <input
                   type="text"
+                  disabled={!isAdmin}
                   value={tenant.bankIfscCode || ''}
                   onChange={(e) => setTenant({ ...tenant, bankIfscCode: e.target.value })}
                   placeholder="e.g. HDFC0001234"
-                  className="w-full text-xs font-mono uppercase px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
+                  className="w-full text-xs font-mono uppercase px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                 />
               </div>
 
@@ -487,10 +513,11 @@ export default function SettingsPage() {
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">UPI ID (VPA)</label>
                 <input
                   type="text"
+                  disabled={!isAdmin}
                   value={tenant.bankUpiId || ''}
                   onChange={(e) => setTenant({ ...tenant, bankUpiId: e.target.value })}
                   placeholder="e.g. abmato@hdfcbank"
-                  className="w-full text-xs font-mono px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
+                  className="w-full text-xs font-mono px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
@@ -900,8 +927,8 @@ export default function SettingsPage() {
         </div>
       </form>
 
-      {/* Onboard New Tenant Modal */}
-      {showNewTenantModal && (
+      {/* Onboard New Tenant Modal (Strictly Admin only) */}
+      {isAdmin && showNewTenantModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
