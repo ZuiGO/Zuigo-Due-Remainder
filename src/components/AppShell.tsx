@@ -134,7 +134,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               }`}
             >
               <Users className="w-4 h-4 text-sky-400" />
-              Customer Directory
+              Customer Contacts
             </Link>
             <Link 
               href="/templates" 

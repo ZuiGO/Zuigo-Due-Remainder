@@ -198,8 +198,8 @@ export default function CustomersPage() {
     }
   };
 
-  const openAddContactModal = (customer: any, existingContact?: any) => {
-    setSelectedCustomer(customer);
+  const openAddContactModal = (customer?: any, existingContact?: any) => {
+    setSelectedCustomer(customer || customers[0] || null);
     if (existingContact) {
       setEditingContactId(existingContact.id);
       setContactForm({
@@ -208,7 +208,7 @@ export default function CustomersPage() {
         mobileNumber: existingContact.mobileNumber || '',
         whatsappNumber: existingContact.whatsappNumber || '',
         emailId: existingContact.emailId || '',
-        preferredLanguage: customer.preferredLanguage || 'English',
+        preferredLanguage: customer?.preferredLanguage || 'English',
         isPrimary: existingContact.isPrimary ?? true,
       });
     } else {
@@ -219,8 +219,8 @@ export default function CustomersPage() {
         mobileNumber: '',
         whatsappNumber: '',
         emailId: '',
-        preferredLanguage: customer.preferredLanguage || 'English',
-        isPrimary: !customer.contacts || customer.contacts.length === 0,
+        preferredLanguage: customer?.preferredLanguage || 'English',
+        isPrimary: !customer?.contacts || customer.contacts.length === 0,
       });
     }
     setContactModalOpen(true);
@@ -228,7 +228,10 @@ export default function CustomersPage() {
 
   const handleSaveContact = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCustomer) return;
+    if (!selectedCustomer) {
+      alert('Please select or create a customer first.');
+      return;
+    }
 
     if (!contactForm.mobileNumber && !contactForm.emailId) {
       alert('Please provide at least a mobile number or an email ID.');
@@ -297,22 +300,31 @@ export default function CustomersPage() {
         <div>
           <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
             <Users className="w-6 h-6 text-sky-600" />
-            Customer Directory & Reminder Automation
+            Customer Contacts & Directory
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Configure reminder frequency, channels, stop/resume status, view audit history, and choose between Automatic vs. Semi-Automatic dispatch per customer.
+            Manage customer contact directory, identify missing contacts, add contacts manually, and configure reminder channels.
           </p>
         </div>
 
-        <div className="relative w-full sm:w-72">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search company, person, or phone..."
-            className="w-full text-xs pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500 shadow-sm"
-          />
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <button
+            onClick={() => openAddContactModal(customers[0] || null)}
+            className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 shadow-sm transition whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" /> Add Contact Manually
+          </button>
+
+          <div className="relative w-full sm:w-64">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search company, person, or phone..."
+              className="w-full text-xs pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500 shadow-sm"
+            />
+          </div>
         </div>
       </div>
 
@@ -406,7 +418,7 @@ export default function CustomersPage() {
             <thead className="bg-slate-50 text-slate-500 text-[11px] uppercase font-semibold border-b border-slate-200 tracking-wider">
               <tr>
                 <th className="py-3 px-4">Company / Ledger</th>
-                <th className="py-3 px-4">Contact Directory</th>
+                <th className="py-3 px-4">Customer Contact</th>
                 <th className="py-3 px-4">Outstanding Due</th>
                 <th className="py-3 px-4">Frequency</th>
                 <th className="py-3 px-4">Channels</th>
@@ -497,16 +509,18 @@ export default function CustomersPage() {
                             </button>
                           </div>
                         ) : (
-                          <div>
-                            <span className="text-amber-600 text-[11px] font-semibold italic flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3" /> No phone/email
+                          <div className="space-y-1.5">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                              <AlertTriangle className="w-3 h-3 text-amber-700" /> Missing Contacts (No phone/email)
                             </span>
-                            <button
-                              onClick={() => openAddContactModal(c)}
-                              className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition"
-                            >
-                              <Plus className="w-2.5 h-2.5" /> Add Contact
-                            </button>
+                            <div>
+                              <button
+                                onClick={() => openAddContactModal(c)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition"
+                              >
+                                <Plus className="w-3 h-3" /> Add Contact Manually
+                              </button>
+                            </div>
                           </div>
                         )}
                       </td>
@@ -801,6 +815,27 @@ export default function CustomersPage() {
             </div>
 
             <form onSubmit={handleSaveContact} className="p-6 space-y-4">
+              {customers.length > 0 && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Company / Customer *</label>
+                  <select
+                    value={selectedCustomer?.id || ''}
+                    onChange={(e) => {
+                      const match = customers.find((c) => c.id === e.target.value);
+                      if (match) setSelectedCustomer(match);
+                    }}
+                    disabled={Boolean(editingContactId)}
+                    className="w-full text-xs px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-sky-500 focus:outline-none bg-white font-semibold disabled:bg-slate-50 disabled:text-slate-500"
+                  >
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.partyName || c.rawLedgerName.replace(/\[.*?\]/g, '').trim()} (Ledger: {c.ledgerCode})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Contact Person Name *</label>
