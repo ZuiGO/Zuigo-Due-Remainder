@@ -274,9 +274,24 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
     const billDate = parseDate(row['Bill Date'] || row['bill_date']);
     const dueDate = parseDate(row['Due Date'] || row['due_date']);
 
-    const billAmount = Math.abs(Number(row['BillAmt'] || row['Bill Amount'] || row['bill_amount'] || 0));
-    const adjustment = Math.abs(Number(row['Adjustment'] || row['adjustment'] || 0));
-    const outstandingAmount = Number(row['Outstanding'] || row['Outstanding Amount'] || row['outstanding_amount'] || 0);
+    const rawBillAmt = Number(row['BillAmt'] || row['Bill Amount'] || row['bill_amount'] || 0);
+    const rawAdjustment = Number(row['Adjustment'] || row['adjustment'] || 0);
+    const rawOutstanding = Number(row['Outstanding'] || row['Outstanding Amount'] || row['outstanding_amount'] || 0);
+
+    // Identify if entry is an Advance Receipt / Credit Note (AD voucher, negative balance, or advance narration)
+    const isCreditOrAdvance =
+      rawBillAmt < 0 ||
+      rawOutstanding < 0 ||
+      billNo.startsWith('AD') ||
+      /adv/i.test(narration || '') ||
+      /advance/i.test(narration || '');
+
+    const billAmount = Math.abs(rawBillAmt);
+    // If it is an advance receipt from a customer, the money was received upfront as an advance deposit
+    const adjustment = isCreditOrAdvance && rawAdjustment === 0
+      ? billAmount
+      : Math.abs(rawAdjustment);
+    const outstandingAmount = isCreditOrAdvance ? 0 : Math.max(0, rawOutstanding);
 
     // Days Overdue = ReferenceDate - DueDate
     const dueTime = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate()).getTime();
@@ -290,11 +305,12 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
     else if (daysOverdue >= 31) agingBucket = '31-60 Days';
     else if (daysOverdue >= 1) agingBucket = '1-30 Days';
 
-    // Exclusion Rules: TDS on Sales, Electricity Bill, Sales Return, or negative balance
+    // Exclusion Rules: TDS on Sales, Electricity Bill, Sales Return, or credit/advance vouchers
     const isExcluded =
       /tds\s*on\s*sales/i.test(rawParty) ||
       /electricity\s*bill/i.test(rawParty) ||
       /sales\s*return/i.test(rawParty) ||
+      isCreditOrAdvance ||
       outstandingAmount <= 0;
 
     const actionType = isExcluded ? 'No Action' : 'Follow-up Required';
@@ -320,7 +336,7 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
       dueDate,
       billAmount,
       adjustment,
-      outstandingAmount: Math.max(0, outstandingAmount),
+      outstandingAmount,
       daysOverdue,
       agingBucket,
       actionType,

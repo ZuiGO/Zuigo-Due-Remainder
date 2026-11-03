@@ -389,6 +389,10 @@ export default function DuesPage() {
                   const contacts = inv.customer?.contacts || [];
                   const primaryContact = contacts.find((c: any) => c.isPrimary) || contacts[0];
                   const commitment = inv.commitments && inv.commitments.length > 0 ? inv.commitments[0] : null;
+                  const isAdvance =
+                    Boolean(inv.billNo?.startsWith('AD')) ||
+                    Boolean(inv.billNo?.includes('CN')) ||
+                    Boolean(inv.narration && /adv/i.test(inv.narration));
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
@@ -427,16 +431,38 @@ export default function DuesPage() {
                             year: 'numeric',
                           })}
                         </div>
+                        {isAdvance && (
+                          <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200 mt-1">
+                            Advance Receipt (Cr)
+                          </span>
+                        )}
                       </td>
 
                       {/* Bill Amount */}
                       <td className="py-4 px-6 font-semibold text-slate-700">
-                        ₹{inv.billAmount.toLocaleString('en-IN')}
+                        <div>₹{inv.billAmount.toLocaleString('en-IN')}</div>
+                        {isAdvance && (
+                          <div className="text-[10px] text-slate-400 font-medium">Credit Voucher</div>
+                        )}
                       </td>
 
                       {/* Paid / Adjusted */}
                       <td className="py-4 px-6 font-semibold text-emerald-700">
-                        {inv.adjustment > 0 ? `₹${inv.adjustment.toLocaleString('en-IN')}` : '₹0'}
+                        {inv.adjustment > 0 ? (
+                          <>
+                            <div>₹{inv.adjustment.toLocaleString('en-IN')}</div>
+                            {isAdvance && (
+                              <div className="text-[10px] text-emerald-600 font-bold">Advance Collected</div>
+                            )}
+                          </>
+                        ) : isAdvance ? (
+                          <>
+                            <div>₹{inv.billAmount.toLocaleString('en-IN')}</div>
+                            <div className="text-[10px] text-emerald-600 font-bold">Advance Collected</div>
+                          </>
+                        ) : (
+                          '₹0'
+                        )}
                       </td>
 
                       {/* Outstanding Due (Distinct & Highlighted) */}
@@ -444,6 +470,9 @@ export default function DuesPage() {
                         <div className={`text-sm ${inv.outstandingAmount > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
                           ₹{inv.outstandingAmount.toLocaleString('en-IN')}
                         </div>
+                        {isAdvance && (
+                          <div className="text-[10px] text-emerald-700 font-bold">No Dues (Prepaid)</div>
+                        )}
                       </td>
 
                       {/* Due Date & Commitment */}
@@ -479,67 +508,81 @@ export default function DuesPage() {
 
                       {/* Payment Status Dropdown */}
                       <td className="py-4 px-6">
-                        <select
-                          value={inv.status}
-                          onChange={(e) => handleStatusChange(inv.id, e.target.value)}
-                          className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border focus:outline-none transition ${
-                            inv.status === 'Payment Received' || inv.status === 'Closed'
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                              : inv.status === 'Partially Paid'
-                              ? 'bg-amber-50 border-amber-300 text-amber-800'
-                              : inv.status === 'Promise to Pay'
-                              ? 'bg-sky-50 border-sky-300 text-sky-800'
-                              : inv.status === 'Disputed' || inv.status === 'Escalated'
-                              ? 'bg-purple-50 border-purple-300 text-purple-800'
-                              : 'bg-rose-50 border-rose-300 text-rose-800'
-                          }`}
-                        >
-                          <option value="Pending">Pending</option>
-                          <option value="Payment Received">Payment Received</option>
-                          <option value="Partially Paid">Partially Paid</option>
-                          <option value="Promise to Pay">Promise to Pay</option>
-                          <option value="Disputed">Disputed</option>
-                          <option value="Escalated">Escalated</option>
-                          <option value="Legal Notice">Legal Notice</option>
-                          <option value="Closed">Closed</option>
-                        </select>
+                        {isAdvance ? (
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-50 text-sky-800 border border-sky-200 inline-block">
+                            Advance Received (Cr)
+                          </span>
+                        ) : (
+                          <select
+                            value={inv.status}
+                            onChange={(e) => handleStatusChange(inv.id, e.target.value)}
+                            className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border focus:outline-none transition ${
+                              inv.status === 'Payment Received' || inv.status === 'Closed'
+                                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                                : inv.status === 'Partially Paid'
+                                ? 'bg-amber-50 border-amber-300 text-amber-800'
+                                : inv.status === 'Promise to Pay'
+                                ? 'bg-sky-50 border-sky-300 text-sky-800'
+                                : inv.status === 'Disputed' || inv.status === 'Escalated'
+                                ? 'bg-purple-50 border-purple-300 text-purple-800'
+                                : 'bg-rose-50 border-rose-300 text-rose-800'
+                            }`}
+                          >
+                            <option value="Pending">Pending</option>
+                            <option value="Payment Received">Payment Received</option>
+                            <option value="Partially Paid">Partially Paid</option>
+                            <option value="Promise to Pay">Promise to Pay</option>
+                            <option value="Disputed">Disputed</option>
+                            <option value="Escalated">Escalated</option>
+                            <option value="Legal Notice">Legal Notice</option>
+                            <option value="Closed">Closed</option>
+                          </select>
+                        )}
                       </td>
 
                       {/* Actions */}
                       <td className="py-4 px-6 text-right space-x-1.5 whitespace-nowrap">
-                        {inv.status !== 'Payment Received' && inv.status !== 'Closed' && (
-                          <button
-                            onClick={() => handleStatusChange(inv.id, 'Payment Received')}
-                            title="Quick 1-Click Mark as Paid"
-                            className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition inline-flex items-center gap-1"
-                          >
-                            <CheckCircle className="w-3.5 h-3.5" /> Mark Paid
-                          </button>
+                        {isAdvance ? (
+                          <span className="text-xs font-semibold text-slate-500 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
+                            Advance on File
+                          </span>
+                        ) : (
+                          <>
+                            {inv.status !== 'Payment Received' && inv.status !== 'Closed' && (
+                              <button
+                                onClick={() => handleStatusChange(inv.id, 'Payment Received')}
+                                title="Quick 1-Click Mark as Paid"
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition inline-flex items-center gap-1"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> Mark Paid
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => handleOpenPayment(inv)}
+                              title="Record payment or Promise to Pay commitment"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition inline-flex items-center gap-1"
+                            >
+                              <CreditCard className="w-3 h-3" /> Record Pay
+                            </button>
+
+                            <button
+                              onClick={() => handleOpenInstallment(inv)}
+                              title="Split remaining amount into milestone installments"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition inline-flex items-center gap-1"
+                            >
+                              <Split className="w-3 h-3" /> Split
+                            </button>
+
+                            <button
+                              onClick={() => handleOpenRemind(inv)}
+                              title="Send reminder via WhatsApp, SMS, or Email"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition inline-flex items-center gap-1"
+                            >
+                              <Send className="w-3 h-3" /> Remind
+                            </button>
+                          </>
                         )}
-
-                        <button
-                          onClick={() => handleOpenPayment(inv)}
-                          title="Record payment or Promise to Pay commitment"
-                          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition inline-flex items-center gap-1"
-                        >
-                          <CreditCard className="w-3 h-3" /> Record Pay
-                        </button>
-
-                        <button
-                          onClick={() => handleOpenInstallment(inv)}
-                          title="Split remaining amount into milestone installments"
-                          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition inline-flex items-center gap-1"
-                        >
-                          <Split className="w-3 h-3" /> Split
-                        </button>
-
-                        <button
-                          onClick={() => handleOpenRemind(inv)}
-                          title="Send reminder via WhatsApp, SMS, or Email"
-                          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition inline-flex items-center gap-1"
-                        >
-                          <Send className="w-3 h-3" /> Remind
-                        </button>
                       </td>
                     </tr>
                   );

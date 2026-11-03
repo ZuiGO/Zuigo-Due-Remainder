@@ -6,7 +6,9 @@ import {
   cleanEmail,
   parseDate,
   parseExcelCSVText,
+  parseSapDuesExport,
 } from '../lib/parser.js';
+import * as XLSX from 'xlsx';
 
 describe('Excel Workbook & Multi-Invoice Multi-Contact Parser Tests', () => {
   it('should normalize names by stripping ERP brackets and symbols', () => {
@@ -17,6 +19,37 @@ describe('Excel Workbook & Multi-Invoice Multi-Contact Parser Tests', () => {
   it('should clean and format phone numbers with country code', () => {
     assert.strictEqual(cleanPhone('72763 00484'), '+917276300484');
     assert.strictEqual(cleanPhone('+91 80871 82898'), '+918087182898');
+  });
+
+  it('should accurately detect advance deposit receipts and credit notes without showing 0 0 0 error', () => {
+    const rawData = [
+      {
+        'Ledger Code': '670212689',
+        'Party Name': 'Shobha Packaging Company',
+        'Bill No': 'AD0009 [0000050]',
+        'Bill Date': '10 Mar 2026',
+        'Due Date': '10 Mar 2026',
+        'BillAmt': -49467,
+        'Adjustment': 0,
+        'Outstanding': -49467,
+        'Narration': 'Agst: AMT/2026-27/0085Adv: AD0009,',
+      },
+    ];
+    const ws = XLSX.utils.json_to_sheet(rawData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Outstanding');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const parsed = parseSapDuesExport(buf);
+    assert.strictEqual(parsed.length, 1);
+    const adv = parsed[0];
+    assert.strictEqual(adv.billNo, 'AD0009 [0000050]');
+    assert.strictEqual(adv.partyName, 'Shobha Packaging Company');
+    assert.strictEqual(adv.billAmount, 49467);
+    assert.strictEqual(adv.adjustment, 49467); // Credited as collected advance
+    assert.strictEqual(adv.outstandingAmount, 0); // No dues owed
+    assert.strictEqual(adv.isExcluded, true);
+    assert.strictEqual(adv.actionType, 'No Action');
   });
 
   it('should parse multi-invoice multi-contact customer data from user format', () => {
