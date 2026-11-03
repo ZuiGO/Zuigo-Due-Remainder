@@ -61,6 +61,7 @@ export default function DashboardPage() {
   const [queueActionMsg, setQueueActionMsg] = useState<string | null>(null);
   const [inspectMessage, setInspectMessage] = useState<any | null>(null);
   const [queuedCount, setQueuedCount] = useState<number>(0);
+  const [queueFilter, setQueueFilter] = useState<'ALL' | 'ELIGIBLE' | 'MISSING_CONTACTS' | 'SENT_TODAY'>('ALL');
 
   // Remind modal state
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
@@ -149,6 +150,11 @@ export default function DashboardPage() {
     fetchDashboardData();
   }, []);
 
+  const isItemEligible = (item: any) => {
+    const allSent = item.alreadySentToday?.whatsapp && item.alreadySentToday?.sms && item.alreadySentToday?.email;
+    return Boolean(item.hasContacts && item.reminderEnabled && !allSent);
+  };
+
   const fetchApprovalQueue = async () => {
     try {
       setLoadingQueue(true);
@@ -156,12 +162,12 @@ export default function DashboardPage() {
       const res = await fetch('/api/reminders/approval-queue');
       const data = await res.json();
       if (data.success) {
-        setQueuedItems(data.queue);
+        setQueuedItems(data.queue || []);
         setQueuedCount(data.totalQueuedCount || 0);
-        // Default select all eligible customers who have registered contacts and haven't been sent today
+        // Pre-select all eligible customers who have registered contacts and unsent channels
         const autoSelected = new Set<string>();
-        data.queue.forEach((item: any) => {
-          if (item.hasContacts && !item.alreadySentToday.whatsapp && item.reminderEnabled) {
+        (data.queue || []).forEach((item: any) => {
+          if (isItemEligible(item)) {
             autoSelected.add(item.customerId);
           }
         });
@@ -186,12 +192,34 @@ export default function DashboardPage() {
     setSelectedQueueIds(next);
   };
 
-  const handleSelectAllQueue = () => {
-    if (selectedQueueIds.size === queuedItems.length) {
-      setSelectedQueueIds(new Set());
+  const handleSelectEligibleOnly = () => {
+    const eligibleIds = new Set(queuedItems.filter(isItemEligible).map(q => q.customerId));
+    setSelectedQueueIds(eligibleIds);
+  };
+
+  const handleSelectAllInView = (itemsInView: any[]) => {
+    const next = new Set(selectedQueueIds);
+    itemsInView.forEach(item => next.add(item.customerId));
+    setSelectedQueueIds(next);
+  };
+
+  const handleDeselectAllInView = (itemsInView: any[]) => {
+    const next = new Set(selectedQueueIds);
+    itemsInView.forEach(item => next.delete(item.customerId));
+    setSelectedQueueIds(next);
+  };
+
+  const handleToggleSelectAllInView = (itemsInView: any[]) => {
+    const allSelected = itemsInView.length > 0 && itemsInView.every(item => selectedQueueIds.has(item.customerId));
+    if (allSelected) {
+      handleDeselectAllInView(itemsInView);
     } else {
-      setSelectedQueueIds(new Set(queuedItems.map(q => q.customerId)));
+      handleSelectAllInView(itemsInView);
     }
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedQueueIds(new Set());
   };
 
   const handleDispatchApprovedQueue = async () => {
@@ -1117,180 +1145,319 @@ export default function DashboardPage() {
             )}
 
             {/* Summary & Controls Bar */}
-            <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 shrink-0 text-xs">
-              <div className="flex items-center gap-4 text-slate-600">
-                <span>
-                  <strong className="text-slate-900">{queuedItems.length}</strong> Customer Accounts
-                </span>
-                <span>•</span>
-                <span>
-                  Total Receivables:{' '}
-                  <strong className="text-rose-600 font-bold">
-                    ₹{queuedItems.reduce((sum, item) => sum + item.totalDue, 0).toLocaleString('en-IN')}
-                  </strong>
-                </span>
-                <span>•</span>
-                <span>
-                  Approved for Dispatch:{' '}
-                  <strong className="text-purple-700 font-bold">{selectedQueueIds.size}</strong>
-                </span>
-              </div>
+            {(() => {
+              const eligibleItems = queuedItems.filter(isItemEligible);
+              const missingContactsItems = queuedItems.filter((i: any) => !i.hasContacts);
+              const sentTodayItems = queuedItems.filter((i: any) => i.alreadySentToday?.whatsapp || i.alreadySentToday?.sms || i.alreadySentToday?.email);
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleSelectAllQueue}
-                  className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 font-semibold text-slate-700 hover:bg-slate-100 transition"
-                >
-                  {selectedQueueIds.size === queuedItems.length ? 'Deselect All' : 'Select All Eligible'}
-                </button>
-                <button
-                  onClick={fetchApprovalQueue}
-                  disabled={loadingQueue}
-                  className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
-                  title="Refresh Queue"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingQueue ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-            </div>
+              const displayedQueueItems = queuedItems.filter((item: any) => {
+                if (queueFilter === 'ELIGIBLE') return isItemEligible(item);
+                if (queueFilter === 'MISSING_CONTACTS') return !item.hasContacts;
+                if (queueFilter === 'SENT_TODAY') return item.alreadySentToday?.whatsapp || item.alreadySentToday?.sms || item.alreadySentToday?.email;
+                return true;
+              });
 
-            {/* Queue Table */}
-            <div className="overflow-y-auto flex-1 p-6">
-              {loadingQueue ? (
-                <div className="py-16 text-center text-slate-400">Loading queued reminders...</div>
-              ) : queuedItems.length === 0 ? (
-                <div className="py-16 text-center text-slate-500">
-                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-                  <p className="font-bold text-sm text-slate-800">Queue is Clear for Today!</p>
-                  <p className="text-xs text-slate-400 mt-1">All eligible daily digests have already been dispatched or no open dues qualify.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {queuedItems.map((item) => {
-                    const isSelected = selectedQueueIds.has(item.customerId);
-                    const canSend = item.hasContacts && !item.alreadySentToday.whatsapp && item.reminderEnabled;
+              const allInViewSelected = displayedQueueItems.length > 0 && displayedQueueItems.every(i => selectedQueueIds.has(i.customerId));
+              const selectedEligibleCount = Array.from(selectedQueueIds).filter(id => {
+                const item = queuedItems.find(q => q.customerId === id);
+                return item && isItemEligible(item);
+              }).length;
+              const selectedMissingCount = Array.from(selectedQueueIds).filter(id => {
+                const item = queuedItems.find(q => q.customerId === id);
+                return item && !item.hasContacts;
+              }).length;
 
-                    return (
-                      <div
-                        key={item.customerId}
-                        className={`p-4 rounded-2xl border transition ${
-                          isSelected
-                            ? 'bg-purple-50/30 border-purple-200 shadow-sm'
-                            : 'bg-white border-slate-200 hover:border-slate-300'
+              return (
+                <>
+                  <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 shrink-0 text-xs">
+                    <div className="flex items-center gap-4 text-slate-600">
+                      <span>
+                        <strong className="text-slate-900">{queuedItems.length}</strong> Accounts
+                      </span>
+                      <span>•</span>
+                      <span>
+                        Total Due:{' '}
+                        <strong className="text-rose-600 font-bold">
+                          ₹{queuedItems.reduce((sum, item) => sum + item.totalDue, 0).toLocaleString('en-IN')}
+                        </strong>
+                      </span>
+                      <span>•</span>
+                      <span>
+                        Selected for Dispatch:{' '}
+                        <strong className="text-purple-700 font-bold">{selectedQueueIds.size}</strong>
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectEligibleOnly}
+                        className="px-3 py-1.5 rounded-lg bg-purple-50 border border-purple-200 font-bold text-purple-700 hover:bg-purple-100 transition shadow-xs flex items-center gap-1.5"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Select Ready to Send ({eligibleItems.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSelectAllInView(displayedQueueItems)}
+                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 font-semibold text-slate-700 hover:bg-slate-100 transition shadow-xs"
+                      >
+                        {allInViewSelected ? 'Deselect View' : 'Select All in View'}
+                      </button>
+                      {selectedQueueIds.size > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleDeselectAll}
+                          className="px-2.5 py-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-200/50 transition font-medium"
+                        >
+                          Clear Selection
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={fetchApprovalQueue}
+                        disabled={loadingQueue}
+                        className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                        title="Refresh Queue"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${loadingQueue ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Filter Tabs Bar */}
+                  <div className="px-6 py-2 border-b border-slate-100 flex items-center gap-2 bg-white text-xs shrink-0 overflow-x-auto">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mr-1">Filter View:</span>
+                    <button
+                      type="button"
+                      onClick={() => setQueueFilter('ALL')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                        queueFilter === 'ALL'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      All Accounts ({queuedItems.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueueFilter('ELIGIBLE')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
+                        queueFilter === 'ELIGIBLE'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'text-purple-700 hover:bg-purple-50'
+                      }`}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Ready to Send ({eligibleItems.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueueFilter('MISSING_CONTACTS')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
+                        queueFilter === 'MISSING_CONTACTS'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-amber-700 hover:bg-amber-50'
+                      }`}
+                    >
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      Missing Contacts ({missingContactsItems.length})
+                    </button>
+                    {sentTodayItems.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setQueueFilter('SENT_TODAY')}
+                        className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
+                          queueFilter === 'SENT_TODAY'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-emerald-700 hover:bg-emerald-50'
                         }`}
                       >
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div className="flex items-start gap-3">
-                            <button
-                              type="button"
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Sent Today ({sentTodayItems.length})
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Queue Table */}
+                  <div className="overflow-y-auto flex-1 p-6">
+                    {loadingQueue ? (
+                      <div className="py-16 text-center text-slate-400">Loading queued reminders...</div>
+                    ) : displayedQueueItems.length === 0 ? (
+                      <div className="py-16 text-center text-slate-500">
+                        <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                        <p className="font-bold text-sm text-slate-800">No customer accounts in this view</p>
+                        <p className="text-xs text-slate-400 mt-1">Try switching to &quot;All Accounts&quot; to review the complete queue.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {displayedQueueItems.map((item) => {
+                          const isSelected = selectedQueueIds.has(item.customerId);
+                          const isEligible = isItemEligible(item);
+                          const sentChannels = [
+                            item.alreadySentToday?.whatsapp && 'WhatsApp',
+                            item.alreadySentToday?.sms && 'SMS',
+                            item.alreadySentToday?.email && 'Email',
+                          ].filter(Boolean);
+
+                          return (
+                            <div
+                              key={item.customerId}
                               onClick={() => handleToggleQueueSelect(item.customerId)}
-                              disabled={!canSend}
-                              className={`mt-1 text-slate-400 transition disabled:opacity-30 ${
-                                isSelected ? 'text-purple-600' : 'hover:text-slate-600'
+                              className={`p-4 rounded-2xl border transition cursor-pointer select-none ${
+                                isSelected
+                                  ? 'bg-purple-50/70 border-purple-300 shadow-sm ring-1 ring-purple-200'
+                                  : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/60'
                               }`}
                             >
-                              {isSelected ? (
-                                <CheckSquare className="w-5 h-5 text-purple-600" />
-                              ) : (
-                                <Square className="w-5 h-5" />
-                              )}
-                            </button>
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div className="flex items-start gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleQueueSelect(item.customerId);
+                                    }}
+                                    className={`mt-1 text-slate-400 transition hover:scale-110 ${
+                                      isSelected ? 'text-purple-600' : 'hover:text-slate-600'
+                                    }`}
+                                    title={isSelected ? 'Deselect customer' : 'Select customer for dispatch'}
+                                  >
+                                    {isSelected ? (
+                                      <CheckSquare className="w-5 h-5 text-purple-600 fill-purple-50" />
+                                    ) : (
+                                      <Square className="w-5 h-5 text-slate-400" />
+                                    )}
+                                  </button>
 
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h4 className="font-bold text-slate-900 text-sm">
-                                  {item.partyName}
-                                </h4>
-                                {!item.hasContacts && (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
-                                    Missing Contacts
-                                  </span>
-                                )}
-                                {item.alreadySentToday.whatsapp && (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                                    Already Sent Today
-                                  </span>
-                                )}
-                              </div>
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h4 className="font-bold text-slate-900 text-sm">
+                                        {item.partyName}
+                                      </h4>
+                                      {!item.hasContacts ? (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 flex items-center gap-1 border border-amber-200">
+                                          <AlertCircle className="w-3 h-3 text-amber-600" />
+                                          Missing Contacts
+                                        </span>
+                                      ) : isEligible ? (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                          Ready to Send
+                                        </span>
+                                      ) : null}
 
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-mono mt-1">
-                                <span>Ledger: {item.ledgerCode}</span>
-                                <span>•</span>
-                                <span>Contact: <strong className="text-slate-700 font-sans">{item.contactPerson}</strong></span>
-                                {item.mobileNumber && (
-                                  <>
-                                    <span>•</span>
-                                    <span className="flex items-center gap-1">
-                                      <Phone className="w-3 h-3 text-slate-400" /> {item.mobileNumber}
-                                    </span>
-                                  </>
-                                )}
-                                {item.emailId && (
-                                  <>
-                                    <span>•</span>
-                                    <span className="flex items-center gap-1">
-                                      <Mail className="w-3 h-3 text-slate-400" /> {item.emailId}
-                                    </span>
-                                  </>
-                                )}
+                                      {!item.reminderEnabled && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                          Reminders Paused
+                                        </span>
+                                      )}
+
+                                      {sentChannels.length > 0 && (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1 border border-emerald-200">
+                                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                          Sent Today ({sentChannels.join(', ')})
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-mono mt-1">
+                                      <span>Ledger: {item.ledgerCode}</span>
+                                      <span>•</span>
+                                      <span>Contact: <strong className="text-slate-700 font-sans">{item.contactPerson}</strong></span>
+                                      {item.mobileNumber && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="flex items-center gap-1">
+                                            <Phone className="w-3 h-3 text-slate-400" /> {item.mobileNumber}
+                                          </span>
+                                        </>
+                                      )}
+                                      {item.emailId && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="flex items-center gap-1">
+                                            <Mail className="w-3 h-3 text-slate-400" /> {item.emailId}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-4 sm:text-right shrink-0">
+                                  <div>
+                                    <div className="font-extrabold text-slate-900 text-base">
+                                      ₹{item.totalDue.toLocaleString('en-IN')}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">
+                                      {item.invoicesCount} open bill(s)
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setInspectMessage(item);
+                                    }}
+                                    className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-sm transition"
+                                  >
+                                    <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                                    <span>Preview Digest</span>
+                                  </button>
+                                </div>
                               </div>
                             </div>
-                          </div>
-
-                          <div className="flex items-center gap-4 sm:text-right shrink-0">
-                            <div>
-                              <div className="font-extrabold text-slate-900 text-base">
-                                ₹{item.totalDue.toLocaleString('en-IN')}
-                              </div>
-                              <div className="text-[11px] text-slate-500">
-                                {item.invoicesCount} open bill(s)
-                              </div>
-                            </div>
-
-                            <button
-                              onClick={() => setInspectMessage(item)}
-                              className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-sm transition"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                              <span>Preview Digest</span>
-                            </button>
-                          </div>
-                        </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                    )}
+                  </div>
 
-            {/* Modal Footer */}
-            <div className="p-5 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowApprovalQueue(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                Close
-              </button>
+                  {/* Modal Footer */}
+                  <div className="p-5 border-t border-slate-100 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setShowApprovalQueue(false)}
+                        className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
+                      >
+                        Close
+                      </button>
+                      {selectedQueueIds.size > 0 && (
+                        <span className="text-xs text-slate-600">
+                          <strong className="text-purple-700">{selectedQueueIds.size}</strong> account(s) approved.
+                          {selectedMissingCount > 0 && (
+                            <span className="text-amber-700 font-semibold ml-1">
+                              ({selectedMissingCount} with missing contacts will be skipped)
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </div>
 
-              <button
-                onClick={handleDispatchApprovedQueue}
-                disabled={dispatchingQueue || selectedQueueIds.size === 0}
-                className="px-6 py-2.5 rounded-xl text-xs font-extrabold bg-purple-600 hover:bg-purple-700 text-white shadow-md transition disabled:opacity-50 flex items-center gap-2"
-              >
-                {dispatchingQueue ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Dispatching Digests...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>Approve & Dispatch Selected ({selectedQueueIds.size})</span>
-                  </>
-                )}
-              </button>
-            </div>
+                    <button
+                      type="button"
+                      onClick={handleDispatchApprovedQueue}
+                      disabled={dispatchingQueue || selectedQueueIds.size === 0}
+                      className="px-6 py-2.5 rounded-xl text-xs font-extrabold bg-purple-600 hover:bg-purple-700 text-white shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {dispatchingQueue ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Dispatching Digests...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                          <span>Approve & Dispatch Selected ({selectedQueueIds.size})</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
