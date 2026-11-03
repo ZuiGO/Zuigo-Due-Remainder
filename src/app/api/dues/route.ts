@@ -290,3 +290,38 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const deletedReminderLogBills = await prisma.reminderLogBills.deleteMany({});
+    const deletedReminderLogs = await prisma.reminderLog.deleteMany({});
+    const deletedDiffLogs = await prisma.dailyDiffLog.deleteMany({});
+    const deletedPayments = await prisma.paymentRecord.deleteMany({});
+    const deletedCommitments = await prisma.promiseToPayCommitment.deleteMany({});
+    const deletedInstallments = await prisma.installment.deleteMany({});
+    const deletedInvoices = await prisma.invoice.deleteMany({});
+    const deletedBatches = await prisma.importBatch.deleteMany({});
+    const deletedDispatchRuns = await prisma.dispatchRun.deleteMany({});
+    const deletedContacts = await prisma.customerContact.deleteMany({});
+    const deletedSchedules = await prisma.reminderSchedule.deleteMany({
+      where: { customerId: { not: null } },
+    });
+    const deletedCustomers = await prisma.customer.deleteMany({});
+
+    return NextResponse.json({
+      success: true,
+      message: 'All transactional, customer, and dues data has been cleared. All reminders have been stopped.',
+      summary: {
+        deletedInvoices: deletedInvoices.count,
+        deletedCustomers: deletedCustomers.count,
+        deletedContacts: deletedContacts.count,
+        deletedPayments: deletedPayments.count,
+        deletedBatches: deletedBatches.count,
+      },
+    });
+  } catch (error: any) {
+    console.error('Clear data error:', error);
+    return NextResponse.json({ error: error?.message || 'Failed to clear data' }, { status: 500 });
+  }
+}
+

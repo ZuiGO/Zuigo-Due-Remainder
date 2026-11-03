@@ -18,6 +18,7 @@ import {
   Zap,
   CheckCircle2,
   AlertCircle,
+  Trash2,
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -97,6 +98,28 @@ export default function SettingsPage() {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [testTesting, setTestTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ channel: string; msg: string; success: boolean } | null>(null);
+  const [clearingData, setClearingData] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearMsg, setClearMsg] = useState<string | null>(null);
+
+  const handleClearData = async () => {
+    setClearingData(true);
+    setClearMsg(null);
+    try {
+      const res = await fetch('/api/dues', { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        setClearMsg('All customer, contact, and dues data has been completely cleared. Reminders have been stopped.');
+        setShowClearConfirm(false);
+      } else {
+        setClearMsg(data.error || 'Failed to clear data');
+      }
+    } catch {
+      setClearMsg('Network error while clearing data');
+    } finally {
+      setClearingData(false);
+    }
+  };
 
   const fetchSettings = async () => {
     try {
@@ -950,6 +973,36 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* DATA MANAGEMENT & RESET */}
+        <div className="bg-white rounded-2xl border border-rose-200 shadow-sm overflow-hidden p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-bold text-rose-900 flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                Clear Ingested Data & Stop Reminders
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 max-w-xl">
+                Deletes all imported customer accounts, contacts, open invoices, payment diffs, and reminder history.
+                Gateway settings and message templates are preserved.
+                <strong className="text-rose-700"> All automated and scheduled reminders stop immediately.</strong>
+              </p>
+              {clearMsg && (
+                <div className="mt-2 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 inline-block">
+                  {clearMsg}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowClearConfirm(true)}
+              className="px-4 py-2.5 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap shadow-sm"
+            >
+              <Trash2 className="w-4 h-4 text-rose-600" />
+              Clear Current Data
+            </button>
+          </div>
+        </div>
       </form>
 
       {/* Onboard New Tenant Modal (Strictly Admin only) */}
@@ -1063,6 +1116,63 @@ export default function SettingsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Confirmation Modal for Clearing Data */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-rose-100 flex items-center justify-between bg-rose-50/70">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center text-rose-600">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-rose-900 text-sm">Clear All Current Data?</h3>
+                  <p className="text-[11px] text-rose-700">This action will delete all transactional records.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 text-xs text-slate-600 space-y-3">
+              <p>
+                Are you sure you want to completely clear all imported customers, contacts, invoices, diff reconciliation history, and payment records?
+              </p>
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] space-y-1">
+                <div className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                  <Check className="w-3.5 h-3.5" /> Message templates and Gateway settings are preserved.
+                </div>
+                <div className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                  <Check className="w-3.5 h-3.5" /> All automated & manual reminders will stop immediately.
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowClearConfirm(false)}
+                className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-200/60 font-semibold text-xs transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={clearingData}
+                onClick={handleClearData}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {clearingData ? 'Clearing Data...' : 'Yes, Clear All Data'}
+              </button>
+            </div>
           </div>
         </div>
       )}
