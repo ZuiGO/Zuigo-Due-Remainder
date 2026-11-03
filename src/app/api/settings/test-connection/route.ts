@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
 
     const testRecipient =
       channel === 'EMAIL'
-        ? (config.user || config.fromEmail || OVERRIDE_TARGET_EMAIL)
+        ? OVERRIDE_TARGET_EMAIL
         : (config.fromNumber || OVERRIDE_TARGET_PHONE);
 
     const result = await dispatchMessage({

@@ -92,12 +92,23 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     });
   }
 
-  if (!integration) {
-    integration = await prisma.integrationSetting.findFirst({
+  // Fallback to global provider if tenant doesn't have one or if tenant is SIMULATOR but global has a live configured provider
+  if (!integration || integration.providerName === 'SIMULATOR') {
+    const globalSetting = await prisma.integrationSetting.findFirst({
       where: {
         providerType: channel,
+        providerName: { not: 'SIMULATOR' },
       },
     });
+    if (globalSetting) {
+      integration = globalSetting;
+    } else if (!integration) {
+      integration = await prisma.integrationSetting.findFirst({
+        where: {
+          providerType: channel,
+        },
+      });
+    }
   }
 
   const isSandbox =
@@ -121,14 +132,18 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
   const provider = req.providerName || integration?.providerName || 'SIMULATOR';
 
   // Determine effective recipient
-  if (recipient) {
+  if (isSandbox) {
+    if (channel === 'EMAIL') {
+      effectiveRecipient = OVERRIDE_TARGET_EMAIL; // All demo emails routed to jayesh@zuigo.ai
+    } else {
+      effectiveRecipient = OVERRIDE_TARGET_PHONE; // All demo SMS/WhatsApp routed to +918530383141
+    }
+  } else if (recipient) {
     effectiveRecipient = recipient;
   } else if (channel === 'EMAIL') {
     effectiveRecipient = config.user || config.fromEmail || OVERRIDE_TARGET_EMAIL;
-  } else if (isSandbox) {
-    effectiveRecipient = OVERRIDE_TARGET_PHONE;
   } else {
-    effectiveRecipient = recipient || OVERRIDE_TARGET_PHONE;
+    effectiveRecipient = OVERRIDE_TARGET_PHONE;
   }
 
   try {
@@ -136,12 +151,17 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     // EMAIL DISPATCH
     // ----------------------------------------------------
     if (channel === 'EMAIL') {
-      if (provider === 'SMTP' && config.host && config.user && config.pass) {
+      let smtpHost = config.host || '';
+      if (smtpHost.includes('@') || smtpHost.toLowerCase().includes('gmail')) {
+        smtpHost = 'smtp.gmail.com';
+      }
+
+      if (provider === 'SMTP' && smtpHost && config.user && config.pass) {
         const portNum = Number(config.port) || 587;
         const isSecure = config.secure !== undefined ? Boolean(config.secure) : portNum === 465;
 
         const transporter = nodemailer.createTransport({
-          host: config.host,
+          host: smtpHost,
           port: portNum,
           secure: isSecure,
           auth: {
@@ -158,11 +178,19 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           ? (config.fromName ? `"${config.fromName}" <${config.fromEmail}>` : config.fromEmail)
           : config.user;
 
+        const emailSubject = isSandbox && recipient && recipient !== OVERRIDE_TARGET_EMAIL
+          ? `[DEMO TEST for ${recipient}] ${subject}`
+          : subject;
+
+        const emailBody = isSandbox && recipient && recipient !== OVERRIDE_TARGET_EMAIL
+          ? `[DEMO ROUTING: Intended for customer contact ${recipient}]\n\n${messageContent}`
+          : messageContent;
+
         const info = await transporter.sendMail({
           from: fromAddress,
           to: effectiveRecipient,
-          subject,
-          text: messageContent,
+          subject: emailSubject,
+          text: emailBody,
         });
 
         return {
