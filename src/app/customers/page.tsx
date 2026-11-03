@@ -26,6 +26,91 @@ import {
   Check,
 } from 'lucide-react';
 
+function ManualFrequencyInput({
+  initialFreq,
+  initialMsgsPerDay,
+  onSave,
+}: {
+  initialFreq: number;
+  initialMsgsPerDay: number;
+  onSave: (freq: number, msgs: number) => void;
+}) {
+  const [freq, setFreq] = useState<string>(String(initialFreq));
+  const [msgs, setMsgs] = useState<string>(String(initialMsgsPerDay));
+  const [isChanged, setIsChanged] = useState<boolean>(false);
+
+  useEffect(() => {
+    setFreq(String(initialFreq));
+    setMsgs(String(initialMsgsPerDay));
+    setIsChanged(false);
+  }, [initialFreq, initialMsgsPerDay]);
+
+  const handleCommit = () => {
+    const f = Math.max(1, parseInt(freq, 10) || 1);
+    const m = Math.max(1, Math.min(20, parseInt(msgs, 10) || 1));
+    setFreq(String(f));
+    setMsgs(String(m));
+    setIsChanged(false);
+    onSave(f, m);
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="flex items-center bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-2xs hover:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-500">
+        <span className="text-[10px] text-slate-400 mr-1 font-medium">Every</span>
+        <input
+          type="number"
+          min="1"
+          max="365"
+          value={freq}
+          onChange={(e) => {
+            setFreq(e.target.value);
+            setIsChanged(true);
+          }}
+          onBlur={handleCommit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleCommit();
+          }}
+          title="Frequency in days (e.g., 1 for daily, 2 for every 2 days, 7 for weekly)"
+          className="w-8 text-xs font-bold text-slate-800 text-center bg-transparent focus:outline-none"
+        />
+        <span className="text-[10px] text-slate-400 ml-1 font-medium">d</span>
+      </div>
+
+      <div className="flex items-center bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-2xs hover:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-500">
+        <input
+          type="number"
+          min="1"
+          max="20"
+          value={msgs}
+          onChange={(e) => {
+            setMsgs(e.target.value);
+            setIsChanged(true);
+          }}
+          onBlur={handleCommit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleCommit();
+          }}
+          title="Number of reminder messages per day"
+          className="w-7 text-xs font-bold text-slate-800 text-center bg-transparent focus:outline-none"
+        />
+        <span className="text-[10px] text-slate-400 ml-1 font-medium">msg/d</span>
+      </div>
+
+      {isChanged && (
+        <button
+          type="button"
+          onClick={handleCommit}
+          title="Apply Frequency"
+          className="p-1 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs transition"
+        >
+          <Check className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -535,32 +620,13 @@ export default function CustomersPage() {
                         </div>
                       </td>
 
-                      {/* 4. Configure Frequency (with Messages per day) */}
+                      {/* 4. Configure Frequency (Manual Input: Days interval & msgs/day) */}
                       <td className="py-3.5 px-4">
-                        <select
-                          value={`${currentFreq}_${currentMsgsPerDay}`}
-                          onChange={(e) => {
-                            const [f, m] = e.target.value.split('_').map(Number);
-                            handleUpdateFrequency(c.id, f, m);
-                          }}
-                          className="text-xs font-semibold py-1.5 px-2.5 rounded-xl border border-slate-200 bg-white hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer"
-                        >
-                          <optgroup label="Daily (Messages per day)">
-                            <option value="1_1">1 msg / day (Daily)</option>
-                            <option value="1_2">2 msgs / day</option>
-                            <option value="1_3">3 msgs / day</option>
-                            <option value="1_4">4 msgs / day</option>
-                            <option value="1_5">5 msgs / day</option>
-                          </optgroup>
-                          <optgroup label="Periodic Cadence">
-                            <option value="2_1">Every 2 Days (1 msg/d)</option>
-                            <option value="3_1">Every 3 Days (1 msg/d)</option>
-                            <option value="3_2">Every 3 Days (2 msgs/d)</option>
-                            <option value="7_1">Weekly (7d)</option>
-                            <option value="15_1">Every 15 Days</option>
-                            <option value="30_1">Monthly (30d)</option>
-                          </optgroup>
-                        </select>
+                        <ManualFrequencyInput
+                          initialFreq={currentFreq}
+                          initialMsgsPerDay={currentMsgsPerDay}
+                          onSave={(f, m) => handleUpdateFrequency(c.id, f, m)}
+                        />
                       </td>
 
                       {/* 5. Select Channels of Messaging */}

@@ -58,10 +58,10 @@ async function main() {
   // 3. Seed Multilingual Templates (English, Hindi, Marathi)
   console.log('Seeding multilingual message templates...');
 
-  // A. English Templates
+  // A. Multilingual Templates (English, Hindi, Marathi)
   for (const t of PREDEFINED_TEMPLATES) {
     const existing = await prisma.messageTemplate.findFirst({
-      where: { tenantId: tenant.id, channel: t.channel, category: t.category, language: 'English' },
+      where: { tenantId: tenant.id, channel: t.channel, category: t.category, language: t.language },
     });
     if (!existing) {
       await prisma.messageTemplate.create({
@@ -69,7 +69,7 @@ async function main() {
           tenantId: tenant.id,
           channel: t.channel,
           category: t.category,
-          language: 'English',
+          language: t.language,
           name: t.name,
           subject: t.subject || null,
           templateBody: t.templateBody,

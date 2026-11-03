@@ -3,9 +3,11 @@ import prisma from '../db';
 
 /**
  * Multi-Channel Dispatcher Engine
- * Configured for both production gateway execution and direct test routing:
- * - Text (SMS) & WhatsApp -> +918530383141
+ * SAFETY & TEST ENVIRONMENT:
+ * All messages are guaranteed to land ONLY to:
  * - Email -> jayesh@zuigo.ai
+ * - SMS & WhatsApp -> +918530383141
+ * Real customer contact phone numbers and emails are never messaged.
  */
 
 export const OVERRIDE_TARGET_PHONE = '+918530383141';
@@ -33,7 +35,8 @@ export interface DispatchResponse {
 }
 
 /**
- * Builds direct app deep links (WhatsApp Web, SMS, Mailto)
+ * Builds direct app deep links (WhatsApp Web, SMS, Mailto).
+ * In test mode, all action links strictly target jayesh@zuigo.ai and +918530383141.
  */
 export function buildChannelActionUrl(
   channel: 'WHATSAPP' | 'SMS' | 'EMAIL',
@@ -41,8 +44,8 @@ export function buildChannelActionUrl(
   subject: string = 'Payment Due Reminder',
   recipient?: string
 ): string {
-  const targetPhone = recipient || OVERRIDE_TARGET_PHONE;
-  const targetEmail = recipient || OVERRIDE_TARGET_EMAIL;
+  const targetPhone = OVERRIDE_TARGET_PHONE;
+  const targetEmail = OVERRIDE_TARGET_EMAIL;
 
   if (channel === 'WHATSAPP') {
     const cleanDigits = targetPhone.replace(/\D/g, '');
@@ -62,7 +65,7 @@ export function buildChannelActionUrl(
 
 /**
  * Dispatches a reminder across the specified channel.
- * Reads tenant's IntegrationSetting to use configured provider (SMTP, Twilio, Meta, Fast2SMS, or Simulator).
+ * Guarantees test redirection to jayesh@zuigo.ai and +918530383141.
  */
 export async function dispatchMessage(req: DispatchRequest): Promise<DispatchResponse> {
   const {
@@ -74,12 +77,18 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     isSandbox: forceSandbox,
   } = req;
 
-  // 1. Initial recipient placeholder
-  let effectiveRecipient =
-    recipient ||
-    (channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE);
+  // 1. Safe Routing: All messages are redirected to test accounts
+  const intendedCustomerRecipient =
+    recipient || (channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE);
+  const effectiveRecipient =
+    channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE;
 
-  const actionUrl = buildChannelActionUrl(channel, messageContent, subject, effectiveRecipient);
+  const actionUrl = buildChannelActionUrl(
+    channel,
+    messageContent,
+    subject,
+    effectiveRecipient
+  );
 
   // 2. Fetch tenant integration settings for this channel
   let integration = null;
@@ -131,24 +140,9 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
 
   const provider = req.providerName || integration?.providerName || 'SIMULATOR';
 
-  // Determine effective recipient
-  if (isSandbox) {
-    if (channel === 'EMAIL') {
-      effectiveRecipient = OVERRIDE_TARGET_EMAIL; // All demo emails routed to jayesh@zuigo.ai
-    } else {
-      effectiveRecipient = OVERRIDE_TARGET_PHONE; // All demo SMS/WhatsApp routed to +918530383141
-    }
-  } else if (recipient) {
-    effectiveRecipient = recipient;
-  } else if (channel === 'EMAIL') {
-    effectiveRecipient = config.user || config.fromEmail || OVERRIDE_TARGET_EMAIL;
-  } else {
-    effectiveRecipient = OVERRIDE_TARGET_PHONE;
-  }
-
   try {
     // ----------------------------------------------------
-    // EMAIL DISPATCH
+    // EMAIL DISPATCH -> ALWAYS TO jayesh@zuigo.ai
     // ----------------------------------------------------
     if (channel === 'EMAIL') {
       let smtpHost = config.host || '';
@@ -178,19 +172,34 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           ? (config.fromName ? `"${config.fromName}" <${config.fromEmail}>` : config.fromEmail)
           : config.user;
 
-        const emailSubject = isSandbox && recipient && recipient !== OVERRIDE_TARGET_EMAIL
-          ? `[DEMO TEST for ${recipient}] ${subject}`
-          : subject;
+        const emailSubject =
+          intendedCustomerRecipient && intendedCustomerRecipient !== OVERRIDE_TARGET_EMAIL
+            ? `[TEST DEMO for ${intendedCustomerRecipient}] ${subject}`
+            : `[TEST DEMO] ${subject}`;
 
-        const emailBody = isSandbox && recipient && recipient !== OVERRIDE_TARGET_EMAIL
-          ? `[DEMO ROUTING: Intended for customer contact ${recipient}]\n\n${messageContent}`
-          : messageContent;
+        const hasHtml =
+          messageContent.includes('<p>') ||
+          messageContent.includes('<div>') ||
+          messageContent.includes('<blockquote>');
+
+        const emailHtml = hasHtml
+          ? `<div style="background:#fef3c7;border:1px solid #f59e0b;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-family:sans-serif;font-size:12px;color:#92400e;">
+              <strong>⚠️ TEST DEMO ROUTING:</strong> All demo messages are routed to <code>${OVERRIDE_TARGET_EMAIL}</code>.<br/>
+              Intended Customer Contact: <strong>${intendedCustomerRecipient}</strong>
+             </div>
+             ${messageContent}`
+          : undefined;
+
+        const emailText = !hasHtml
+          ? `[TEST DEMO ROUTING: Intended for ${intendedCustomerRecipient}]\n\n${messageContent}`
+          : messageContent.replace(/<[^>]+>/g, '');
 
         const info = await transporter.sendMail({
           from: fromAddress,
-          to: effectiveRecipient,
+          to: OVERRIDE_TARGET_EMAIL, // STRICTLY jayesh@zuigo.ai
           subject: emailSubject,
-          text: emailBody,
+          html: emailHtml,
+          text: emailText,
         });
 
         return {
@@ -212,9 +221,9 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           },
           body: JSON.stringify({
             from: config.fromEmail || 'onboarding@resend.dev',
-            to: effectiveRecipient,
-            subject,
-            text: messageContent,
+            to: OVERRIDE_TARGET_EMAIL, // STRICTLY jayesh@zuigo.ai
+            subject: `[TEST DEMO for ${intendedCustomerRecipient}] ${subject}`,
+            text: `[TEST DEMO for ${intendedCustomerRecipient}]\n\n${messageContent}`,
           }),
         });
         const resData = await res.json();
@@ -231,11 +240,16 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     }
 
     // ----------------------------------------------------
-    // WHATSAPP DISPATCH
+    // WHATSAPP DISPATCH -> ALWAYS TO +918530383141
     // ----------------------------------------------------
     if (channel === 'WHATSAPP') {
+      const cleanTo = OVERRIDE_TARGET_PHONE.replace(/\D/g, ''); // 918530383141
+      const waContent =
+        intendedCustomerRecipient && intendedCustomerRecipient !== OVERRIDE_TARGET_PHONE
+          ? `*[TEST DEMO for ${intendedCustomerRecipient}]*\n\n${messageContent}`
+          : messageContent;
+
       if (!isSandbox && provider === 'META_CLOUD_API' && config.accessToken && config.phoneNumberId) {
-        const cleanTo = effectiveRecipient.replace(/\D/g, '');
         const res = await fetch(
           `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
           {
@@ -248,7 +262,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
               messaging_product: 'whatsapp',
               to: cleanTo,
               type: 'text',
-              text: { body: messageContent },
+              text: { body: waContent },
             }),
           }
         );
@@ -267,9 +281,12 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
       if (!isSandbox && provider === 'TWILIO' && config.accountSid && config.authToken) {
         const auth = Buffer.from(`${config.accountSid}:${config.authToken}`).toString('base64');
         const params = new URLSearchParams();
-        params.append('From', config.fromNumber?.startsWith('whatsapp:') ? config.fromNumber : `whatsapp:${config.fromNumber}`);
-        params.append('To', effectiveRecipient.startsWith('whatsapp:') ? effectiveRecipient : `whatsapp:${effectiveRecipient}`);
-        params.append('Body', messageContent);
+        params.append(
+          'From',
+          config.fromNumber?.startsWith('whatsapp:') ? config.fromNumber : `whatsapp:${config.fromNumber}`
+        );
+        params.append('To', `whatsapp:${OVERRIDE_TARGET_PHONE}`);
+        params.append('Body', waContent);
 
         const res = await fetch(
           `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Messages.json`,
@@ -296,11 +313,16 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     }
 
     // ----------------------------------------------------
-    // SMS DISPATCH
+    // SMS DISPATCH -> ALWAYS TO +918530383141
     // ----------------------------------------------------
     if (channel === 'SMS') {
+      const cleanTo = OVERRIDE_TARGET_PHONE.replace(/\D/g, '').slice(-10); // 8530383141
+      const smsContent =
+        intendedCustomerRecipient && intendedCustomerRecipient !== OVERRIDE_TARGET_PHONE
+          ? `[TEST for ${intendedCustomerRecipient}] ${messageContent}`
+          : messageContent;
+
       if (!isSandbox && provider === 'FAST2SMS' && config.apiKey) {
-        const cleanTo = effectiveRecipient.replace(/\D/g, '').slice(-10);
         const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
           method: 'POST',
           headers: {
@@ -309,7 +331,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           },
           body: JSON.stringify({
             route: 'q',
-            message: messageContent,
+            message: smsContent,
             language: 'english',
             numbers: cleanTo,
           }),
@@ -330,8 +352,8 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
         const auth = Buffer.from(`${config.accountSid}:${config.authToken}`).toString('base64');
         const params = new URLSearchParams();
         params.append('From', config.fromNumber || '+1234567890');
-        params.append('To', effectiveRecipient);
-        params.append('Body', messageContent);
+        params.append('To', OVERRIDE_TARGET_PHONE);
+        params.append('Body', smsContent);
 
         const res = await fetch(
           `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Messages.json`,
@@ -357,7 +379,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
       }
     }
 
-    // Default Sandbox / Direct Link Fallback: Record as SENT and link to target
+    // Default Sandbox / Direct Link Fallback: Record as SENT and link to test target
     const simulatedId = `${channel.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     return {
       success: true,
@@ -365,7 +387,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
       status: 'SENT',
       timestamp: new Date(),
       actionUrl,
-      effectiveRecipient,
+      effectiveRecipient, // jayesh@zuigo.ai or +918530383141
     };
   } catch (err: any) {
     console.error(`Dispatch error on channel ${channel}:`, err);
