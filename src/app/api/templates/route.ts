@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { PREDEFINED_TEMPLATES } from '@/lib/template-renderer';
+import { PREDEFINED_TEMPLATES, stripHtmlToCleanText } from '@/lib/template-renderer';
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,34 +8,56 @@ export async function GET(req: NextRequest) {
     const channelFilter = searchParams.get('channel');
     const languageFilter = searchParams.get('language');
 
-    // Ensure all predefined multilingual templates (English, Hindi, Marathi) exist in DB
-    const count = await prisma.messageTemplate.count();
-    if (count < PREDEFINED_TEMPLATES.length) {
-      const tenant = await prisma.tenant.findFirst();
-      for (const t of PREDEFINED_TEMPLATES) {
-        const existing = await prisma.messageTemplate.findFirst({
-          where: {
+    // 1. Ensure all predefined multilingual templates (English, Hindi, Marathi) exist in DB
+    const tenant = await prisma.tenant.findFirst();
+    for (const t of PREDEFINED_TEMPLATES) {
+      const existing = await prisma.messageTemplate.findFirst({
+        where: {
+          channel: t.channel,
+          category: t.category,
+          language: t.language,
+        },
+      });
+      if (!existing) {
+        await prisma.messageTemplate.create({
+          data: {
+            tenantId: tenant?.id || null,
             channel: t.channel,
             category: t.category,
             language: t.language,
+            name: t.name,
+            subject: t.subject || null,
+            templateBody: t.templateBody,
+            templateStatus: 'APPROVED',
+            isDefault: true,
           },
         });
-        if (!existing) {
-          await prisma.messageTemplate.create({
-            data: {
-              tenantId: tenant?.id || null,
-              channel: t.channel,
-              category: t.category,
-              language: t.language,
-              name: t.name,
-              subject: t.subject || null,
-              templateBody: t.templateBody,
-              templateStatus: 'APPROVED',
-              isDefault: true,
-            },
-          });
-        }
+      } else if (existing.templateBody.includes('<p>') || existing.templateBody.includes('<blockquote')) {
+        // Upgrade legacy HTML templates to clean readable text
+        await prisma.messageTemplate.update({
+          where: { id: existing.id },
+          data: {
+            templateBody: t.templateBody,
+            subject: t.subject || existing.subject,
+          },
+        });
       }
+    }
+
+    // 2. Clean up any custom templates that might still have raw HTML tags
+    const htmlTemplates = await prisma.messageTemplate.findMany({
+      where: {
+        OR: [
+          { templateBody: { contains: '<p>' } },
+          { templateBody: { contains: '<blockquote' } },
+        ],
+      },
+    });
+    for (const ht of htmlTemplates) {
+      await prisma.messageTemplate.update({
+        where: { id: ht.id },
+        data: { templateBody: stripHtmlToCleanText(ht.templateBody) },
+      });
     }
 
     const where: any = {};
@@ -75,7 +97,7 @@ export async function POST(req: NextRequest) {
         language,
         name,
         subject: subject || null,
-        templateBody,
+        templateBody: stripHtmlToCleanText(templateBody),
         isDefault: false,
       },
     });
@@ -98,7 +120,7 @@ export async function PUT(req: NextRequest) {
     const dataToUpdate: any = {
       name,
       subject: subject || null,
-      templateBody,
+      templateBody: stripHtmlToCleanText(templateBody),
     };
     if (language) dataToUpdate.language = language;
     if (category) dataToUpdate.category = category;

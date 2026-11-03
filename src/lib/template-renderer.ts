@@ -1,6 +1,7 @@
 /**
  * Template Renderer & Predefined Message Presets
  * Formats multi-channel templates (WhatsApp, SMS, Email) with dynamic tags in English, Hindi, and Marathi.
+ * Templates are stored as clean, readable text without raw HTML tags.
  */
 
 export interface TemplateVariables {
@@ -263,7 +264,7 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
   },
 
   // =========================================================================
-  // EMAIL TEMPLATES - ENGLISH
+  // EMAIL TEMPLATES - ENGLISH (Clean text without raw HTML tags)
   // =========================================================================
   {
     category: 'GENTLE',
@@ -271,14 +272,20 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'English',
     name: 'Email - Upcoming Payment Reminder (English)',
     subject: `Upcoming Payment Reminder: Outstanding Balance for {{customer_name}}`,
-    templateBody: `<p>Dear {{contact_person}},</p>
-<p>We would like to remind you that an amount of <strong>₹{{due_amount}}</strong> for <strong>{{customer_name}}</strong> is scheduled for payment on <strong>{{due_date}}</strong>.</p>
-<p>Please find our bank account details below for electronic wire transfer:</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #4f46e5;">
-  {{company_bank_details}}
-</blockquote>
-<p>If you have already processed this payment, kindly reply with the transaction UTR number so we may update our ledger.</p>
-<p>Warm regards,<br>Accounts Team<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `Dear {{contact_person}},
+
+We would like to remind you that an amount of ₹{{due_amount}} for {{customer_name}} is scheduled for payment on {{due_date}}.
+
+Please find our bank account details below for electronic wire transfer:
+
+Bank Details:
+{{company_bank_details}}
+
+If you have already processed this payment, kindly reply with the transaction UTR number so we may update our ledger.
+
+Warm regards,
+Accounts Team
+{{company_name}}`,
   },
   {
     category: 'ON_DUE',
@@ -286,14 +293,19 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'English',
     name: 'Email - Due Today Reminder (English)',
     subject: `Due Today Notice: ₹{{due_amount}} for {{customer_name}}`,
-    templateBody: `<p>Dear {{contact_person}},</p>
-<p>This is a formal notice that your payment of <strong>₹{{due_amount}}</strong> for <strong>{{customer_name}}</strong> is due <strong>today ({{due_date}})</strong>.</p>
-<p>Please arrange for RTGS/NEFT/IMPS remittance today:</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #4f46e5;">
-  {{company_bank_details}}
-</blockquote>
-<p>Kindly acknowledge with payment UTR once transferred.</p>
-<p>Regards,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `Dear {{contact_person}},
+
+This is a formal notice that your payment of ₹{{due_amount}} for {{customer_name}} is due today ({{due_date}}).
+
+Please arrange for RTGS/NEFT/IMPS remittance today:
+
+Bank Details:
+{{company_bank_details}}
+
+Kindly acknowledge with payment UTR once transferred.
+
+Regards,
+{{company_name}}`,
   },
   {
     category: 'OVERDUE',
@@ -301,13 +313,19 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'English',
     name: 'Email - Overdue Account Notice (English)',
     subject: `OVERDUE NOTICE: ₹{{due_amount}} pending for {{customer_name}}`,
-    templateBody: `<p>Dear {{contact_person}},</p>
-<p>Our records indicate that the pending balance of <strong>₹{{due_amount}}</strong> for <strong>{{customer_name}}</strong> is currently <strong>{{days_overdue}} days overdue</strong>.</p>
-<p>Prompt payment is appreciated to ensure uninterrupted supply and services.</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #e11d48;">
-  <strong>Bank Transfer Details:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>Thank you for your cooperation.<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `Dear {{contact_person}},
+
+Our records indicate that the pending balance of ₹{{due_amount}} for {{customer_name}} is currently {{days_overdue}} days overdue.
+
+Prompt payment is appreciated to ensure uninterrupted supply and services.
+
+Bank Transfer Details:
+{{company_bank_details}}
+
+Thank you for your cooperation.
+
+Sincerely,
+{{company_name}}`,
   },
   {
     category: 'FINAL_NOTICE',
@@ -315,14 +333,20 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'English',
     name: 'Email - Final Legal Notice (English)',
     subject: `FINAL NOTICE: Immediate Settlement of ₹{{due_amount}} Required for {{customer_name}}`,
-    templateBody: `<p><strong>URGENT & FINAL NOTICE</strong></p>
-<p>Dear {{contact_person}},</p>
-<p>Despite previous communications, the outstanding balance of <strong>₹{{due_amount}}</strong> for <strong>{{customer_name}}</strong> remains unsettled and is now <strong>{{days_overdue}} days past due</strong>.</p>
-<p>Please be advised that failure to clear this balance within 48 hours will result in immediate suspension of credit terms and possible recovery proceedings.</p>
-<blockquote style="background:#fee2e2;padding:12px;border-left:4px solid #b91c1c;">
-  <strong>Remit To:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>Sincerely,<br>Credit Control Department<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `URGENT & FINAL NOTICE
+
+Dear {{contact_person}},
+
+Despite previous communications, the outstanding balance of ₹{{due_amount}} for {{customer_name}} remains unsettled and is now {{days_overdue}} days past due.
+
+Please be advised that failure to clear this balance within 48 hours will result in immediate suspension of credit terms and possible recovery proceedings.
+
+Remit To:
+{{company_bank_details}}
+
+Sincerely,
+Credit Control Department
+{{company_name}}`,
   },
   {
     category: 'PAYMENT_RECEIPT',
@@ -330,15 +354,21 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'English',
     name: 'Email - Payment Received Acknowledgment (English)',
     subject: `Payment Received: ₹{{last_payment_amount}} from {{customer_name}}`,
-    templateBody: `<p>Dear {{contact_person}},</p>
-<p>We gratefully acknowledge receipt of your payment of <strong>₹{{last_payment_amount}}</strong>.</p>
-<p><strong>Remaining Balance:</strong> ₹{{remaining_balance}}<br>
-<strong>Next Installment Due:</strong> {{next_installment_date}}</p>
-<p>Thank you for your business.<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `Dear {{contact_person}},
+
+We gratefully acknowledge receipt of your payment of ₹{{last_payment_amount}}.
+
+Remaining Balance: ₹{{remaining_balance}}
+Next Installment Due: {{next_installment_date}}
+
+Thank you for your business.
+
+Warm regards,
+{{company_name}}`,
   },
 
   // =========================================================================
-  // EMAIL TEMPLATES - HINDI (हिंदी)
+  // EMAIL TEMPLATES - HINDI (हिंदी - Clean text without HTML tags)
   // =========================================================================
   {
     category: 'GENTLE',
@@ -346,15 +376,23 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Hindi',
     name: 'Email - आगामी भुगतान स्मरणपत्र (Hindi Gentle)',
     subject: `भुगतान स्मरणपत्र: {{customer_name}} की देय राशि`,
-    templateBody: `<p>नमस्ते {{contact_person}},</p>
-<p>यह <strong>{{company_name}}</strong> की ओर से <strong>{{customer_name}}</strong> के भुगतान के संबंध में एक विनम्र स्मरणपत्र है।</p>
-<p>कुल बकाया राशि: <strong>₹{{due_amount}}</strong><br>देय तिथि: <strong>{{due_date}}</strong></p>
-<p>कृपया नियत तिथि पर या उससे पहले भुगतान की व्यवस्था करें।</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #4f46e5;">
-  <strong>बैंक विवरण:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>यदि आपने पहले ही भुगतान कर दिया है, तो कृपया UTR नंबर साझा करें ताकि हम खाता अद्यतन कर सकें।</p>
-<p>धन्यवाद,<br>लेखा विभाग<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `नमस्ते {{contact_person}},
+
+यह {{company_name}} की ओर से {{customer_name}} के भुगतान के संबंध में एक विनम्र स्मरणपत्र है।
+
+कुल बकाया राशि: ₹{{due_amount}}
+देय तिथि: {{due_date}}
+
+कृपया नियत तिथि पर या उससे पहले भुगतान की व्यवस्था करें।
+
+बैंक विवरण:
+{{company_bank_details}}
+
+यदि आपने पहले ही भुगतान कर दिया है, तो कृपया UTR नंबर साझा करें ताकि हम खाता अद्यतन कर सकें।
+
+धन्यवाद,
+लेखा विभाग
+{{company_name}}`,
   },
   {
     category: 'ON_DUE',
@@ -362,13 +400,17 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Hindi',
     name: 'Email - आज देय भुगतान सूचना (Hindi Due Today)',
     subject: `आज देय भुगतान सूचना: {{customer_name}} (राशि: ₹{{due_amount}})`,
-    templateBody: `<p>आदरणीय {{contact_person}},</p>
-<p><strong>{{customer_name}}</strong> के लिए <strong>₹{{due_amount}}</strong> का भुगतान आज (<strong>{{due_date}}</strong>) देय है।</p>
-<p>कृपया समय पर भुगतान की व्यवस्था करें और संदर्भ संख्या / UTR साझा करें:</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #4f46e5;">
-  <strong>बैंक विवरण:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>सादर,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `आदरणीय {{contact_person}},
+
+{{customer_name}} के लिए ₹{{due_amount}} का भुगतान आज ({{due_date}}) देय है।
+
+कृपया समय पर भुगतान की व्यवस्था करें और संदर्भ संख्या / UTR साझा करें:
+
+बैंक विवरण:
+{{company_bank_details}}
+
+सादर,
+{{company_name}}`,
   },
   {
     category: 'OVERDUE',
@@ -376,14 +418,19 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Hindi',
     name: 'Email - अतिदेय भुगतान अनुस्मारक (Hindi Overdue)',
     subject: `अतिदेय भुगतान अनुस्मारक: {{customer_name}} ({{days_overdue}} दिन विलंबित)`,
-    templateBody: `<p>प्रिय {{contact_person}},</p>
-<p>हमारे रिकॉर्ड के अनुसार <strong>{{customer_name}}</strong> का <strong>₹{{due_amount}}</strong> का भुगतान <strong>{{days_overdue}} दिनों से अतिदेय (Overdue)</strong> है।</p>
-<p>व्यापारिक सेवाओं और आपूर्ति को निर्बाध बनाए रखने के लिए कृपया तुरंत बकाया राशि का भुगतान करें।</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #e11d48;">
-  <strong>बैंक विवरण:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>कृपया भुगतान के पश्चात UTR पर्ची भेजें। आपके सहयोग हेतु धन्यवाद।</p>
-<p>सादर,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `प्रिय {{contact_person}},
+
+हमारे रिकॉर्ड के अनुसार {{customer_name}} का ₹{{due_amount}} का भुगतान {{days_overdue}} दिनों से अतिदेय (Overdue) है।
+
+व्यापारिक सेवाओं और आपूर्ति को निर्बाध बनाए रखने के लिए कृपया तुरंत बकाया राशि का भुगतान करें।
+
+बैंक विवरण:
+{{company_bank_details}}
+
+कृपया भुगतान के पश्चात UTR पर्ची भेजें। आपके सहयोग हेतु धन्यवाद।
+
+सादर,
+{{company_name}}`,
   },
   {
     category: 'FINAL_NOTICE',
@@ -391,14 +438,20 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Hindi',
     name: 'Email - अंतिम भुगतान सूचना (Hindi Final Notice)',
     subject: `अंतिम सूचना: {{customer_name}} की अतिदेय बकाया राशि ₹{{due_amount}}`,
-    templateBody: `<p><strong>अत्यंत महत्वपूर्ण सूचना</strong></p>
-<p>प्रिय {{contact_person}},</p>
-<p>अनेक स्मरणपत्रों के बावजूद <strong>{{customer_name}}</strong> की बकाया राशि <strong>₹{{due_amount}}</strong> ({{days_overdue}} दिन विलंबित) अभी तक अप्राप्त है।</p>
-<p>कृपया अगले २४ से ४८ घंटों में यह भुगतान निपटाएं अन्यथा खाता स्थगित किया जा सकता है।</p>
-<blockquote style="background:#fee2e2;padding:12px;border-left:4px solid #b91c1c;">
-  <strong>तुरंत भुगतान हेतु बैंक विवरण:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>सादर,<br>लेखा एवं वसूली विभाग<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `अत्यंत महत्वपूर्ण एवं अंतिम सूचना
+
+प्रिय {{contact_person}},
+
+अनेक स्मरणपत्रों के बावजूद {{customer_name}} की बकाया राशि ₹{{due_amount}} ({{days_overdue}} दिन विलंबित) अभी तक अप्राप्त है।
+
+कृपया अगले २४ से ४८ घंटों में यह भुगतान निपटाएं अन्यथा खाता स्थगित किया जा सकता है।
+
+तुरंत भुगतान हेतु बैंक विवरण:
+{{company_bank_details}}
+
+सादर,
+लेखा एवं वसूली विभाग
+{{company_name}}`,
   },
   {
     category: 'PAYMENT_RECEIPT',
@@ -406,16 +459,21 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Hindi',
     name: 'Email - भुगतान पावती (Hindi Receipt)',
     subject: `भुगतान पावती: {{customer_name}} से प्राप्त राशि ₹{{last_payment_amount}}`,
-    templateBody: `<p>प्रिय {{contact_person}},</p>
-<p>धन्यवाद! हमें <strong>{{customer_name}}</strong> के लिए <strong>₹{{last_payment_amount}}</strong> का भुगतान प्राप्त हो गया है।</p>
-<p><strong>शेष बकाया राशि:</strong> ₹{{remaining_balance}}<br>
-<strong>अगली देय तिथि:</strong> {{next_installment_date}}</p>
-<p>आपके सहयोग के लिए धन्यवाद।</p>
-<p>सादर,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `प्रिय {{contact_person}},
+
+धन्यवाद! हमें {{customer_name}} के लिए ₹{{last_payment_amount}} का भुगतान प्राप्त हो गया है।
+
+शेष बकाया राशि: ₹{{remaining_balance}}
+अगली देय तिथि: {{next_installment_date}}
+
+आपके सहयोग के लिए धन्यवाद।
+
+सादर,
+{{company_name}}`,
   },
 
   // =========================================================================
-  // EMAIL TEMPLATES - MARATHI (मराठी)
+  // EMAIL TEMPLATES - MARATHI (मराठी - Clean text without HTML tags)
   // =========================================================================
   {
     category: 'GENTLE',
@@ -423,15 +481,23 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Marathi',
     name: 'Email - आगामी देयक स्मरणपत्र (Marathi Gentle)',
     subject: `देयक स्मरणपत्र: {{customer_name}} ची देय रक्कम`,
-    templateBody: `<p>सस्नेह नमस्कार {{contact_person}},</p>
-<p><strong>{{company_name}}</strong> कडून <strong>{{customer_name}}</strong> च्या देय रकमेबाबत हे एक विनम्र स्मरणपत्र आहे.</p>
-<p>देय रक्कम: <strong>₹{{due_amount}}</strong><br>देय दिनांक: <strong>{{due_date}}</strong></p>
-<p>कृपया देय दिनांकाच्या आत रकमेचा भरणा करावा ही विनंती.</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #4f46e5;">
-  <strong>बँक तपशील:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>आपण रक्कम भरली असल्यास कृपया UTR संदर्भ क्रमांक पाठवावा.</p>
-<p>आपले नम्र,<br>लेखा विभाग<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `सस्नेह नमस्कार {{contact_person}},
+
+{{company_name}} कडून {{customer_name}} च्या देय रकमेबाबत हे एक विनम्र स्मरणपत्र आहे.
+
+देय रक्कम: ₹{{due_amount}}
+देय दिनांक: {{due_date}}
+
+कृपया देय दिनांकाच्या आत रकमेचा भरणा करावा ही विनंती.
+
+बँक तपशील:
+{{company_bank_details}}
+
+आपण रक्कम भरली असल्यास कृपया UTR संदर्भ क्रमांक पाठवावा.
+
+आपले नम्र,
+लेखा विभाग
+{{company_name}}`,
   },
   {
     category: 'ON_DUE',
@@ -439,13 +505,17 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Marathi',
     name: 'Email - आज देय रक्कम सूचना (Marathi Due Today)',
     subject: `आज देय रक्कम सूचना: {{customer_name}} (₹{{due_amount}})`,
-    templateBody: `<p>सस्नेह नमस्कार {{contact_person}},</p>
-<p><strong>{{customer_name}}</strong> ची <strong>₹{{due_amount}}</strong> रक्कम आज (<strong>{{due_date}}</strong>) देय आहे.</p>
-<p>कृपया आजच बँक खात्यावर रक्कम वर्ग करावी आणि UTR नंबर कळवावा:</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #4f46e5;">
-  <strong>बँक तपशील:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>आपले नम्र,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `सस्नेह नमस्कार {{contact_person}},
+
+{{customer_name}} ची ₹{{due_amount}} रक्कम आज ({{due_date}}) देय आहे.
+
+कृपया आजच बँक खात्यावर रक्कम वर्ग करावी आणि UTR नंबर कळवावा:
+
+बँक तपशील:
+{{company_bank_details}}
+
+आपले नम्र,
+{{company_name}}`,
   },
   {
     category: 'OVERDUE',
@@ -453,14 +523,19 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Marathi',
     name: 'Email - थकीत देयके अनुस्मारक (Marathi Overdue)',
     subject: `थकीत देयके अनुस्मारक: {{customer_name}} ({{days_overdue}} दिवस विलंब)`,
-    templateBody: `<p>सस्नेह नमस्कार {{contact_person}},</p>
-<p>आमच्या नोंदीनुसार <strong>{{customer_name}}</strong> ची <strong>₹{{due_amount}}</strong> ही रक्कम गेल्या <strong>{{days_overdue}} दिवसांपासून थकीत</strong> आहे.</p>
-<p>आपला पुरवठा आणि व्यावसायिक व्यवहार सुरळीत राहण्यासाठी कृपया तात्काळ रक्कम जमा करावी.</p>
-<blockquote style="background:#f4f4f5;padding:12px;border-left:4px solid #e11d48;">
-  <strong>बँक तपशील:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>कृपया रक्कम भरल्यानंतर पावती / UTR पाठवावी.</p>
-<p>आपले नम्र,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `सस्नेह नमस्कार {{contact_person}},
+
+आमच्या नोंदीनुसार {{customer_name}} ची ₹{{due_amount}} ही रक्कम गेल्या {{days_overdue}} दिवसांपासून थकीत आहे.
+
+आपला पुरवठा आणि व्यावसायिक व्यवहार सुरळीत राहण्यासाठी कृपया तात्काळ रक्कम जमा करावी.
+
+बँक तपशील:
+{{company_bank_details}}
+
+कृपया रक्कम भरल्यानंतर पावती / UTR पाठवावी.
+
+आपले नम्र,
+{{company_name}}`,
   },
   {
     category: 'FINAL_NOTICE',
@@ -468,14 +543,19 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Marathi',
     name: 'Email - अंतिम देयक सूचना (Marathi Final Notice)',
     subject: `अंतिम सूचना: {{customer_name}} ची थकीत रक्कम ₹{{due_amount}}`,
-    templateBody: `<p><strong>अत्यंत महत्त्वाची सूचना</strong></p>
-<p>सस्नेह नमस्कार {{contact_person}},</p>
-<p>वारंवार स्मरणपत्रे पाठवूनही <strong>{{customer_name}}</strong> ची <strong>₹{{due_amount}}</strong> ({{days_overdue}} दिवस थकीत) रक्कम अद्याप जमा झालेली नाही.</p>
-<p>कृपया पुढील २४ ते ४८ तासांत रक्कम भरावी अन्यथा पुढील व्यवहार थांबवण्यात येतील.</p>
-<blockquote style="background:#fee2e2;padding:12px;border-left:4px solid #b91c1c;">
-  <strong>बँक तपशील:</strong><br>{{company_bank_details}}
-</blockquote>
-<p>आपले नम्र,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `अत्यंत महत्त्वाची व अंतिम सूचना
+
+सस्नेह नमस्कार {{contact_person}},
+
+वारंवार स्मरणपत्रे पाठवूनही {{customer_name}} ची ₹{{due_amount}} ({{days_overdue}} दिवस थकीत) रक्कम अद्याप जमा झालेली नाही.
+
+कृपया पुढील २४ ते ४८ तासांत रक्कम भरावी अन्यथा पुढील व्यवहार थांबवण्यात येतील.
+
+बँक तपशील:
+{{company_bank_details}}
+
+आपले नम्र,
+{{company_name}}`,
   },
   {
     category: 'PAYMENT_RECEIPT',
@@ -483,14 +563,89 @@ export const PREDEFINED_TEMPLATES: DefaultTemplate[] = [
     language: 'Marathi',
     name: 'Email - देयक पावती (Marathi Receipt)',
     subject: `देयक पावती: {{customer_name}} कडून रक्कम प्राप्त ₹{{last_payment_amount}}`,
-    templateBody: `<p>सस्नेह नमस्कार {{contact_person}},</p>
-<p>धन्यवाद! आम्हाला <strong>{{customer_name}}</strong> कडून <strong>₹{{last_payment_amount}}</strong> ची रक्कम प्राप्त झाली आहे.</p>
-<p><strong>उर्वरित थकीत रक्कम:</strong> ₹{{remaining_balance}}<br>
-<strong>पुढील हप्ता दिनांक:</strong> {{next_installment_date}}</p>
-<p>आपल्या सहकार्याबद्दल धन्यवाद.</p>
-<p>आपले नम्र,<br><strong>{{company_name}}</strong></p>`,
+    templateBody: `सस्नेह नमस्कार {{contact_person}},
+
+धन्यवाद! आम्हाला {{customer_name}} कडून ₹{{last_payment_amount}} ची रक्कम प्राप्त झाली आहे.
+
+उर्वरित थकीत रक्कम: ₹{{remaining_balance}}
+पुढील हप्ता दिनांक: {{next_installment_date}}
+
+आपल्या सहकार्याबद्दल धन्यवाद.
+
+आपले नम्र,
+{{company_name}}`,
   },
 ];
+
+/**
+ * Strips raw HTML tags from legacy template content to provide clean, readable text.
+ */
+export function stripHtmlToCleanText(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, '\n\n$1\n\n')
+    .replace(/<\/(p|div|h[1-6])>/gi, '\n\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Converts clean plain text message into a clean, modern HTML formatted email.
+ */
+export function convertTextToEmailHtml(cleanText: string, companyName?: string): string {
+  const paragraphs = cleanText.split(/\n\n+/);
+  const formattedParagraphs = paragraphs.map((p) => {
+    const trimmed = p.trim();
+    if (!trimmed) return '';
+
+    // If paragraph looks like bank details or headers
+    if (
+      trimmed.toLowerCase().includes('bank details') ||
+      trimmed.toLowerCase().includes('remit to') ||
+      trimmed.includes('बँक तपशील') ||
+      trimmed.includes('बैंक विवरण')
+    ) {
+      return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #4f46e5;padding:12px 16px;border-radius:8px;margin:16px 0;font-family:sans-serif;font-size:13px;line-height:1.6;color:#1e293b;">
+        ${trimmed.replace(/\n/g, '<br/>')}
+      </div>`;
+    }
+
+    // Urgent / Important header
+    if (
+      trimmed.toUpperCase().includes('URGENT') ||
+      trimmed.includes('महत्वपूर्ण') ||
+      trimmed.includes('अंतिम')
+    ) {
+      return `<p style="margin:0 0 12px;font-family:sans-serif;font-size:15px;font-weight:bold;color:#b91c1c;">
+        ${trimmed.replace(/\n/g, '<br/>')}
+      </p>`;
+    }
+
+    return `<p style="margin:0 0 12px;font-family:sans-serif;font-size:14px;line-height:1.6;color:#334155;">
+      ${trimmed.replace(/\n/g, '<br/>')}
+    </p>`;
+  });
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:20px;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <tr>
+      <td style="padding:24px 28px;">
+        ${formattedParagraphs.join('\n')}
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
 
 /**
  * Interpolates template variables inside {{variable_name}} syntax.
@@ -506,6 +661,6 @@ export function renderTemplate(templateString: string, vars: TemplateVariables):
       }
       return String(val);
     }
-    return match; // Keep unresolved tags as-is
+    return match;
   });
 }

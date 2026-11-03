@@ -385,15 +385,14 @@ export default function TemplatesPage() {
             )}
 
             {selectedChannel === 'EMAIL' && (
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex-1 text-xs space-y-3 overflow-y-auto max-h-[520px]">
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex-1 text-xs space-y-3 overflow-y-auto max-h-[520px]">
                 <div className="border-b border-slate-100 pb-2">
-                  <div className="text-[10px] text-slate-400 uppercase">Subject:</div>
-                  <div className="font-bold text-slate-900">{renderPreview(subjectText || 'Payment Reminder')}</div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Subject:</div>
+                  <div className="font-bold text-slate-900 text-sm mt-0.5">{renderPreview(subjectText || 'Payment Reminder')}</div>
                 </div>
-                <div 
-                  className="prose prose-sm text-slate-700 leading-relaxed text-xs"
-                  dangerouslySetInnerHTML={{ __html: renderPreview(bodyText) }}
-                />
+                <div className="text-slate-700 leading-relaxed text-xs whitespace-pre-line font-sans">
+                  {renderPreview(bodyText)}
+                </div>
               </div>
             )}
           </div>

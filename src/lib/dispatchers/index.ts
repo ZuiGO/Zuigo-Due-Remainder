@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import prisma from '../db';
+import { convertTextToEmailHtml } from '../template-renderer';
 
 /**
  * Multi-Channel Dispatcher Engine
@@ -182,17 +183,15 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           messageContent.includes('<div>') ||
           messageContent.includes('<blockquote>');
 
-        const emailHtml = hasHtml
-          ? `<div style="background:#fef3c7;border:1px solid #f59e0b;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-family:sans-serif;font-size:12px;color:#92400e;">
+        const baseHtml = hasHtml ? messageContent : convertTextToEmailHtml(messageContent);
+
+        const emailHtml = `<div style="background:#fef3c7;border:1px solid #f59e0b;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-family:sans-serif;font-size:12px;color:#92400e;">
               <strong>⚠️ TEST DEMO ROUTING:</strong> All demo messages are routed to <code>${OVERRIDE_TARGET_EMAIL}</code>.<br/>
               Intended Customer Contact: <strong>${intendedCustomerRecipient}</strong>
              </div>
-             ${messageContent}`
-          : undefined;
+             ${baseHtml}`;
 
-        const emailText = !hasHtml
-          ? `[TEST DEMO ROUTING: Intended for ${intendedCustomerRecipient}]\n\n${messageContent}`
-          : messageContent.replace(/<[^>]+>/g, '');
+        const emailText = `[TEST DEMO ROUTING: Intended for ${intendedCustomerRecipient}]\n\n${messageContent.replace(/<[^>]+>/g, '')}`;
 
         const info = await transporter.sendMail({
           from: fromAddress,
