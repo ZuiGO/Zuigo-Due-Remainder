@@ -174,6 +174,9 @@ model DailyDiffLog {
   batch           ImportBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
   invoiceId       String?
   invoice         Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  partyName       String?
+  ledgerCode      String?
+  billNo          String?
   diffType        String       // NEW_ENTRY | SAME_ENTRY | PARTIAL_PAYMENT | SETTLED
   previousBalance Float?
   currentBalance  Float?

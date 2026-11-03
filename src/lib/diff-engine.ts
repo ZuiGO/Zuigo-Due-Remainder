@@ -300,6 +300,9 @@ export async function reconcileDailySapExport(
       diffLogs: {
         create: diffLogs.map(l => ({
           diffType: l.diffType,
+          partyName: l.partyName,
+          ledgerCode: l.ledgerCode,
+          billNo: l.billNo,
           previousBalance: l.previousBalance ?? null,
           currentBalance: l.currentBalance,
           notes: l.notes,

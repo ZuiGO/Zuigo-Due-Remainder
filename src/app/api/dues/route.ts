@@ -127,17 +127,74 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Latest Import Batch for Daily Diff Card
-    const latestBatch = await prisma.importBatch.findFirst({
+    // Query Import Batches with Date and Time Stamp
+    const selectedBatchId = searchParams.get('batchId');
+
+    const recentBatches = await prisma.importBatch.findMany({
       where: { tenantId },
       orderBy: { importedAt: 'desc' },
-      include: {
-        diffLogs: {
-          take: 10,
-          orderBy: { createdAt: 'desc' },
-        },
+      take: 20,
+      select: {
+        id: true,
+        fileName: true,
+        importedAt: true,
+        rowCount: true,
+        newEntriesCount: true,
+        sameEntriesCount: true,
+        partialPaymentsCount: true,
+        settledEntriesCount: true,
+        excludedCount: true,
       },
     });
+
+    const activeBatch = selectedBatchId
+      ? await prisma.importBatch.findUnique({
+          where: { id: selectedBatchId },
+          include: {
+            diffLogs: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        })
+      : await prisma.importBatch.findFirst({
+          where: { tenantId },
+          orderBy: { importedAt: 'desc' },
+          include: {
+            diffLogs: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        });
+
+    // Enrich diffLogs with customer name and bill details if missing from legacy records
+    if (activeBatch && activeBatch.diffLogs) {
+      const billToInvoiceMap = new Map<string, any>();
+      for (const inv of allInvoices) {
+        if (inv.billNo) {
+          billToInvoiceMap.set(inv.billNo.toUpperCase().trim(), inv);
+        }
+      }
+
+      activeBatch.diffLogs = activeBatch.diffLogs.map((log: any) => {
+        let partyName = log.partyName;
+        let billNo = log.billNo;
+        if (!partyName || !billNo) {
+          // Attempt extraction from notes or bill map
+          for (const [bNo, inv] of billToInvoiceMap.entries()) {
+            if (log.notes && log.notes.toUpperCase().includes(bNo)) {
+              billNo = billNo || inv.billNo;
+              partyName = partyName || inv.customer?.partyName || inv.customer?.rawLedgerName;
+              break;
+            }
+          }
+        }
+        return {
+          ...log,
+          partyName: partyName || (log.diffType === 'SETTLED' ? 'Cleared Customer' : 'Customer Account'),
+          billNo: billNo || 'Invoice',
+        };
+      });
+    }
 
     return NextResponse.json({
       success: true,
@@ -159,7 +216,8 @@ export async function GET(req: NextRequest) {
         settledCount,
         totalCount: allInvoices.length,
       },
-      latestBatch,
+      latestBatch: activeBatch,
+      recentBatches,
       dues: invoices,
       invoices,
     });

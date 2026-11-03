@@ -29,13 +29,23 @@ import {
   Square,
   X,
   MessageSquare,
-  AlertTriangle
+  AlertTriangle,
+  Calendar,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  CheckCheck
 } from 'lucide-react';
 
 export default function DashboardPage() {
   const [tenant, setTenant] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
   const [latestBatch, setLatestBatch] = useState<any>(null);
+  const [recentBatches, setRecentBatches] = useState<any[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [comparisonSearch, setComparisonSearch] = useState('');
+  const [showComparisonDetails, setShowComparisonDetails] = useState(true);
+  const [allInvoices, setAllInvoices] = useState<any[]>([]);
   const [criticalDues, setCriticalDues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningAutoCheck, setRunningAutoCheck] = useState(false);
@@ -67,15 +77,33 @@ export default function DashboardPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchDashboardData = async () => {
+  const formatDateTime = (dateStr: string | Date | null | undefined) => {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    return d.toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  };
+
+  const fetchDashboardData = async (batchId?: string) => {
     try {
       setLoading(true);
-      const res = await fetch('/api/dues');
+      const bId = batchId !== undefined ? batchId : selectedBatchId;
+      const url = bId ? `/api/dues?batchId=${bId}` : '/api/dues';
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         setTenant(data.tenant);
         setStats(data.stats);
         setLatestBatch(data.latestBatch);
+        setRecentBatches(data.recentBatches || []);
+        setAllInvoices(data.invoices || []);
         const critical = (data.invoices || []).filter(
           (d: any) => d.customer.isFlagged || d.daysOverdue > 0 || d.agingBucket !== 'Not Yet Due'
         );
@@ -97,6 +125,11 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSelectBatch = (bId: string) => {
+    setSelectedBatchId(bId);
+    fetchDashboardData(bId);
   };
 
   useEffect(() => {
@@ -308,6 +341,37 @@ export default function DashboardPage() {
     }
   };
 
+  const handleRemindFromDiff = (log: any) => {
+    const match = allInvoices.find(
+      (inv: any) =>
+        (log.billNo && inv.billNo?.toUpperCase().trim() === log.billNo.toUpperCase().trim()) ||
+        (inv.customer?.partyName && log.partyName && inv.customer.partyName.toLowerCase().includes(log.partyName.toLowerCase()))
+    );
+
+    if (match) {
+      setSelectedInvoice(match);
+      setCustomRemindMessage('');
+      setShowRemindModal(true);
+    } else {
+      setSelectedInvoice({
+        id: log.invoiceId || `diff_${Date.now()}`,
+        billNo: log.billNo || 'Open Bill',
+        outstandingAmount: log.currentBalance || 0,
+        dueDate: new Date().toISOString(),
+        daysOverdue: 15,
+        agingBucket: '1 - 30 Days Overdue',
+        priority: 'High',
+        customer: {
+          partyName: log.partyName || 'Customer',
+          rawLedgerName: log.partyName || 'Customer',
+          contacts: [],
+        },
+      });
+      setCustomRemindMessage('');
+      setShowRemindModal(true);
+    }
+  };
+
   const handleQuickMarkPaid = async (invoiceId: string) => {
     try {
       const res = await fetch('/api/invoices/status', {
@@ -406,49 +470,404 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Daily SAP Import Diff Reconciliation Card (Yesterday vs. Today) */}
-      {latestBatch && (
-        <div className="bg-gradient-to-r from-slate-900 to-indigo-950 p-5 rounded-2xl text-white shadow-lg space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <Layers className="w-5 h-5 text-indigo-400" />
-              <h3 className="font-bold text-sm">
-                Latest SAP Import Diff Reconciliation
-              </h3>
+      {/* Daily SAP Import Diff Reconciliation & Ledger Comparison (Yesterday vs. Today) */}
+      {latestBatch && (() => {
+        const allLogs = latestBatch.diffLogs || [];
+        const filteredLogs = allLogs.filter((log: any) => {
+          if (!comparisonSearch.trim()) return true;
+          const q = comparisonSearch.toLowerCase();
+          return (
+            (log.partyName && log.partyName.toLowerCase().includes(q)) ||
+            (log.billNo && log.billNo.toLowerCase().includes(q)) ||
+            (log.ledgerCode && log.ledgerCode.includes(q)) ||
+            (log.notes && log.notes.toLowerCase().includes(q))
+          );
+        });
+
+        const notSettledLogs = filteredLogs.filter(
+          (l: any) => l.diffType === 'SAME_ENTRY' || l.diffType === 'NEW_ENTRY'
+        );
+        const partiallySettledLogs = filteredLogs.filter(
+          (l: any) => l.diffType === 'PARTIAL_PAYMENT'
+        );
+        const settledLogs = filteredLogs.filter(
+          (l: any) => l.diffType === 'SETTLED'
+        );
+
+        const notSettledSum = notSettledLogs.reduce((acc: number, l: any) => acc + (l.currentBalance || 0), 0);
+        const partialReceivedSum = partiallySettledLogs.reduce(
+          (acc: number, l: any) => acc + Math.max(0, (l.previousBalance || 0) - (l.currentBalance || 0)),
+          0
+        );
+        const settledSum = settledLogs.reduce((acc: number, l: any) => acc + (l.previousBalance || 0), 0);
+
+        return (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden transition">
+            {/* Top Bar with Imported File Information, Date & Time Stamp and Batch Selector */}
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 text-white space-y-3">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
+                      <Layers className="w-5 h-5" />
+                    </span>
+                    <h3 className="font-extrabold text-base tracking-tight text-white flex items-center gap-2">
+                      Daily SAP Import Ledger Comparison
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Yesterday vs. Today Reconciled
+                      </span>
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Live reconciliation between yesterday's and today's imported Excel ledger. Track which customer balances remain open, partially cleared, or settled in full.
+                  </p>
+                </div>
+
+                {/* Import Date & Time Stamp Card */}
+                <div className="bg-slate-800/90 border border-slate-700/80 rounded-xl px-3.5 py-2 text-right shrink-0">
+                  <div className="flex items-center gap-1.5 justify-end text-[11px] font-bold text-amber-400">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Import Date & Time Stamp</span>
+                  </div>
+                  <div className="text-xs font-mono font-bold text-white mt-0.5">
+                    {formatDateTime(latestBatch.importedAt)}
+                  </div>
+                  <div className="text-[10px] text-slate-400 truncate max-w-xs font-mono">
+                    File: {latestBatch.fileName}
+                  </div>
+                </div>
+              </div>
+
+              {/* Batch History Selector Bar (If multiple files imported) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 text-xs">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <Calendar className="w-4 h-4 text-indigo-400" />
+                  <span className="font-semibold text-slate-300">Select Imported File Timestamp:</span>
+                  <select
+                    value={latestBatch.id}
+                    onChange={(e) => handleSelectBatch(e.target.value)}
+                    className="bg-slate-800 text-white border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                  >
+                    {(recentBatches.length > 0 ? recentBatches : [latestBatch]).map((b: any) => (
+                      <option key={b.id} value={b.id}>
+                        {formatDateTime(b.importedAt)} • {b.fileName} ({b.rowCount} rows)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowComparisonDetails(!showComparisonDetails)}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-semibold transition"
+                  >
+                    {showComparisonDetails ? (
+                      <>
+                        <ChevronUp className="w-3.5 h-3.5" /> Hide 3-Column View
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-3.5 h-3.5" /> Show 3-Column View ({allLogs.length} Records)
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="text-[11px] text-slate-400">
-              File: <span className="text-indigo-300 font-mono">{latestBatch.fileName}</span> • Ingested:{' '}
-              {new Date(latestBatch.importedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+
+            {/* Quick KPI Summary Counters */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-slate-100 border-b border-slate-200">
+              <div className="bg-white p-3.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-rose-600 flex items-center justify-between">
+                  <span>🔴 Not Settled</span>
+                  <span className="text-slate-400 font-normal">Pending</span>
+                </div>
+                <div className="text-lg font-black text-slate-900 mt-0.5">
+                  {notSettledLogs.length} bills
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  ₹{notSettledSum.toLocaleString('en-IN')} outstanding
+                </p>
+              </div>
+
+              <div className="bg-white p-3.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 flex items-center justify-between">
+                  <span>🟡 Partially Settled</span>
+                  <span className="text-slate-400 font-normal">Reduced</span>
+                </div>
+                <div className="text-lg font-black text-amber-700 mt-0.5">
+                  {partiallySettledLogs.length} bills
+                </div>
+                <p className="text-[11px] text-emerald-600 font-bold mt-0.5">
+                  ₹{partialReceivedSum.toLocaleString('en-IN')} collected
+                </p>
+              </div>
+
+              <div className="bg-white p-3.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 flex items-center justify-between">
+                  <span>🟢 Settled in Full</span>
+                  <span className="text-slate-400 font-normal">Closed</span>
+                </div>
+                <div className="text-lg font-black text-emerald-700 mt-0.5">
+                  {settledLogs.length} bills
+                </div>
+                <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
+                  ₹{settledSum.toLocaleString('en-IN')} cleared
+                </p>
+              </div>
+
+              <div className="bg-white p-3.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                  <span>📁 Total Ingested</span>
+                  <span className="text-slate-400 font-normal">{latestBatch.rowCount} rows</span>
+                </div>
+                <div className="text-lg font-black text-slate-800 mt-0.5">
+                  {filteredLogs.length} comparison diffs
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
+                  {latestBatch.excludedCount} non-trade excluded
+                </p>
+              </div>
             </div>
+
+            {/* Interactive 3-Column Ledger Comparison */}
+            {showComparisonDetails && (
+              <div className="p-5 space-y-4">
+                {/* Search / Filter Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      value={comparisonSearch}
+                      onChange={(e) => setComparisonSearch(e.target.value)}
+                      placeholder="Filter customer name, bill number, or notes across columns..."
+                      className="w-full pl-9 pr-4 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  {comparisonSearch && (
+                    <button
+                      onClick={() => setComparisonSearch('')}
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                    >
+                      Clear Search
+                    </button>
+                  )}
+                </div>
+
+                {/* The 3 Columns Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {/* COLUMN 1: NOT SETTLED */}
+                  <div className="bg-rose-50/40 rounded-2xl border border-rose-200/80 p-4 space-y-3 flex flex-col">
+                    <div className="flex items-center justify-between border-b border-rose-200/80 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+                        <h4 className="font-extrabold text-xs uppercase tracking-wider text-rose-900">
+                          Not Settled ({notSettledLogs.length})
+                        </h4>
+                      </div>
+                      <span className="text-[11px] font-black text-rose-700">
+                        ₹{notSettledSum.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2.5 overflow-y-auto max-h-96 pr-1">
+                      {notSettledLogs.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-400 bg-white/70 rounded-xl border border-rose-100">
+                          No open unpaid bills matching search.
+                        </div>
+                      ) : (
+                        notSettledLogs.map((log: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="bg-white p-3 rounded-xl border border-rose-100 shadow-sm hover:border-rose-300 transition space-y-1.5"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <h5 className="font-bold text-xs text-slate-900 leading-tight">
+                                  {log.partyName}
+                                </h5>
+                                <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                  Bill #{log.billNo} {log.ledgerCode && `• ${log.ledgerCode}`}
+                                </div>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 shrink-0">
+                                Open
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-50">
+                              <span className="text-slate-500 text-[11px]">Due Balance:</span>
+                              <span className="font-black text-slate-900">
+                                ₹{log.currentBalance?.toLocaleString('en-IN')}
+                              </span>
+                            </div>
+
+                            {log.notes && (
+                              <p className="text-[10px] text-slate-500 italic truncate" title={log.notes}>
+                                {log.notes}
+                              </p>
+                            )}
+
+                            <div className="pt-1 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleRemindFromDiff(log)}
+                                className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold transition flex items-center gap-1"
+                              >
+                                <Send className="w-2.5 h-2.5" /> Remind
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* COLUMN 2: PARTIALLY SETTLED */}
+                  <div className="bg-amber-50/40 rounded-2xl border border-amber-200/80 p-4 space-y-3 flex flex-col">
+                    <div className="flex items-center justify-between border-b border-amber-200/80 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                        <h4 className="font-extrabold text-xs uppercase tracking-wider text-amber-900">
+                          Partially Settled ({partiallySettledLogs.length})
+                        </h4>
+                      </div>
+                      <span className="text-[11px] font-black text-emerald-700">
+                        +₹{partialReceivedSum.toLocaleString('en-IN')} rec'd
+                      </span>
+                    </div>
+
+                    <div className="space-y-2.5 overflow-y-auto max-h-96 pr-1">
+                      {partiallySettledLogs.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-400 bg-white/70 rounded-xl border border-amber-100">
+                          No partial balance reductions detected in this comparison.
+                        </div>
+                      ) : (
+                        partiallySettledLogs.map((log: any, idx: number) => {
+                          const paidDiff = Math.max(0, (log.previousBalance || 0) - (log.currentBalance || 0));
+                          return (
+                            <div
+                              key={idx}
+                              className="bg-white p-3 rounded-xl border border-amber-100 shadow-sm hover:border-amber-300 transition space-y-1.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <h5 className="font-bold text-xs text-slate-900 leading-tight">
+                                    {log.partyName}
+                                  </h5>
+                                  <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                    Bill #{log.billNo} {log.ledgerCode && `• ${log.ledgerCode}`}
+                                  </div>
+                                </div>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 shrink-0">
+                                  Partial
+                                </span>
+                              </div>
+
+                              <div className="bg-emerald-50 rounded-lg p-2 text-xs border border-emerald-100 space-y-0.5">
+                                <div className="flex items-center justify-between text-emerald-900 font-bold text-[11px]">
+                                  <span>Payment Detected:</span>
+                                  <span>+₹{paidDiff.toLocaleString('en-IN')}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                                  <span>Remaining Balance:</span>
+                                  <span className="font-bold text-slate-900">
+                                    ₹{log.currentBalance?.toLocaleString('en-IN')}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {log.notes && (
+                                <p className="text-[10px] text-slate-500 italic truncate" title={log.notes}>
+                                  {log.notes}
+                                </p>
+                              )}
+
+                              <div className="pt-1 flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemindFromDiff(log)}
+                                  className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold transition flex items-center gap-1"
+                                >
+                                  <Send className="w-2.5 h-2.5" /> Follow-up Balance
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* COLUMN 3: SETTLED */}
+                  <div className="bg-emerald-50/40 rounded-2xl border border-emerald-200/80 p-4 space-y-3 flex flex-col">
+                    <div className="flex items-center justify-between border-b border-emerald-200/80 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                        <h4 className="font-extrabold text-xs uppercase tracking-wider text-emerald-900">
+                          Settled in SAP ({settledLogs.length})
+                        </h4>
+                      </div>
+                      <span className="text-[11px] font-black text-emerald-800">
+                        ₹{settledSum.toLocaleString('en-IN')} cleared
+                      </span>
+                    </div>
+
+                    <div className="space-y-2.5 overflow-y-auto max-h-96 pr-1">
+                      {settledLogs.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-400 bg-white/70 rounded-xl border border-emerald-100">
+                          No bills settled or closed out between yesterday and today.
+                        </div>
+                      ) : (
+                        settledLogs.map((log: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm hover:border-emerald-300 transition space-y-1.5"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <h5 className="font-bold text-xs text-slate-900 leading-tight">
+                                  {log.partyName}
+                                </h5>
+                                <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                  Bill #{log.billNo} {log.ledgerCode && `• ${log.ledgerCode}`}
+                                </div>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 shrink-0 flex items-center gap-1">
+                                <CheckCheck className="w-3 h-3" /> Settled
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-50">
+                              <span className="text-slate-500 text-[11px]">Cleared Amount:</span>
+                              <span className="font-black text-emerald-700">
+                                ₹{log.previousBalance?.toLocaleString('en-IN')}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                              <span>Remaining Balance:</span>
+                              <span className="font-bold text-slate-900">₹0.00 (Closed)</span>
+                            </div>
+
+                            {log.notes && (
+                              <p className="text-[10px] text-slate-500 italic truncate" title={log.notes}>
+                                {log.notes}
+                              </p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400">🆕 New Today</div>
-              <div className="text-xl font-black text-white mt-1">{latestBatch.newEntriesCount}</div>
-              <p className="text-[10px] text-slate-400 mt-0.5">Bills added to recovery</p>
-            </div>
-
-            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">🔄 Persistent</div>
-              <div className="text-xl font-black text-white mt-1">{latestBatch.sameEntriesCount}</div>
-              <p className="text-[10px] text-slate-400 mt-0.5">Unchanged open balances</p>
-            </div>
-
-            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">📉 Partial Payments</div>
-              <div className="text-xl font-black text-white mt-1">{latestBatch.partialPaymentsCount}</div>
-              <p className="text-[10px] text-slate-400 mt-0.5">Auto-detected reductions</p>
-            </div>
-
-            <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">✅ Settled in SAP</div>
-              <div className="text-xl font-black text-white mt-1">{latestBatch.settledEntriesCount}</div>
-              <p className="text-[10px] text-slate-400 mt-0.5">Cleared & closed accounts</p>
-            </div>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -773,9 +1192,9 @@ export default function DashboardPage() {
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { id: 'English', label: '🇬🇧 English' },
-                  { id: 'Hindi', label: '🇮🇳 हिन्दी' },
-                  { id: 'Marathi', label: '🚩 मराठी' },
+                  { id: 'English', label: 'English' },
+                  { id: 'Hindi', label: 'हिन्दी' },
+                  { id: 'Marathi', label: 'मराठी' },
                 ].map((item) => (
                   <button
                     key={item.id}

@@ -835,9 +835,9 @@ export default function DuesPage() {
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
-                    { id: 'English', label: '🇬🇧 English' },
-                    { id: 'Hindi', label: '🇮🇳 हिन्दी' },
-                    { id: 'Marathi', label: '🚩 मराठी' },
+                    { id: 'English', label: 'English' },
+                    { id: 'Hindi', label: 'हिन्दी' },
+                    { id: 'Marathi', label: 'मराठी' },
                   ].map((l) => (
                     <button
                       key={l.id}
