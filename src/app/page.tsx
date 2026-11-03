@@ -36,6 +36,7 @@ import {
   ChevronUp,
   CheckCheck
 } from 'lucide-react';
+import { selectBestTemplate, populateInvoiceTemplate } from '@/lib/template-renderer';
 
 export default function DashboardPage() {
   const [tenant, setTenant] = useState<any>(null);
@@ -63,10 +64,12 @@ export default function DashboardPage() {
 
   // Remind modal state
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [templates, setTemplates] = useState<any[]>([]);
   const [remindChannel, setRemindChannel] = useState<'WHATSAPP' | 'SMS' | 'EMAIL'>('WHATSAPP');
   const [remindLanguage, setRemindLanguage] = useState<string>('English');
+  const [remindSubject, setRemindSubject] = useState('');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [customRemindMessage, setCustomRemindMessage] = useState('');
-  const [generatingGroq, setGeneratingGroq] = useState(false);
   const [showRemindModal, setShowRemindModal] = useState(false);
 
   // Upload modal state
@@ -120,6 +123,16 @@ export default function DashboardPage() {
       } catch (err) {
         console.error('Queue count fetch error:', err);
       }
+
+      // Fetch message templates from settings
+      fetch('/api/templates')
+        .then((r) => r.json())
+        .then((td) => {
+          if (td.success && Array.isArray(td.templates)) {
+            setTemplates(td.templates);
+          }
+        })
+        .catch(console.error);
     } catch (e) {
       console.error('Fetch dashboard error:', e);
     } finally {
@@ -284,36 +297,77 @@ export default function DashboardPage() {
     }
   };
 
-  const handleGenerateWithGroq = async () => {
-    if (!selectedInvoice) return;
-    try {
-      setGeneratingGroq(true);
-      const contact = selectedInvoice.customer.contacts?.[0];
-      const res = await fetch('/api/groq/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerName: (selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName).trim(),
-          contactPerson: contact?.personName || 'Sir / Madam',
-          billNo: selectedInvoice.billNo,
-          outstandingAmount: selectedInvoice.outstandingAmount,
-          dueDate: new Date(selectedInvoice.dueDate).toLocaleDateString('en-IN'),
-          daysOverdue: selectedInvoice.daysOverdue || 0,
-          agingBucket: selectedInvoice.agingBucket,
-          priority: selectedInvoice.priority,
-          channel: remindChannel,
-          language: remindLanguage,
-        }),
-      });
-      const data = await res.json();
-      if (data.success && data.message) {
-        setCustomRemindMessage(data.message);
-      }
-    } catch (err: any) {
-      alert('Groq AI error: ' + err?.message);
-    } finally {
-      setGeneratingGroq(false);
+  const applyTemplateToModal = (
+    channel: 'WHATSAPP' | 'SMS' | 'EMAIL',
+    lang: string,
+    inv: any,
+    targetTemplateId?: string,
+    templateList: any[] = templates
+  ) => {
+    if (!inv) return;
+
+    let match = targetTemplateId
+      ? templateList.find((t) => t.id === targetTemplateId)
+      : null;
+
+    if (!match) {
+      match = selectBestTemplate(templateList, channel, lang, inv.daysOverdue || 0);
     }
+
+    if (match) {
+      setSelectedTemplateId(match.id);
+      const populated = populateInvoiceTemplate(
+        match,
+        inv,
+        tenant?.companyName || 'Abhiyadna Machine Tools',
+        tenant?.bankDetails || 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234'
+      );
+      setCustomRemindMessage(populated.body);
+      setRemindSubject(populated.subject);
+    } else {
+      setSelectedTemplateId('');
+      setCustomRemindMessage(`Payment Reminder: Outstanding balance for Bill ${inv.billNo}`);
+      setRemindSubject(`Payment Reminder: Bill ${inv.billNo}`);
+    }
+  };
+
+  const handleOpenRemind = (inv: any) => {
+    setSelectedInvoice(inv);
+    const initialChannel: 'WHATSAPP' | 'SMS' | 'EMAIL' = 'WHATSAPP';
+    const initialLang = inv.customer?.preferredLanguage || 'English';
+    setRemindChannel(initialChannel);
+    setRemindLanguage(initialLang);
+
+    if (templates.length === 0) {
+      fetch('/api/templates')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.success && Array.isArray(d.templates)) {
+            setTemplates(d.templates);
+            applyTemplateToModal(initialChannel, initialLang, inv, undefined, d.templates);
+          }
+        })
+        .catch(console.error);
+    } else {
+      applyTemplateToModal(initialChannel, initialLang, inv);
+    }
+
+    setShowRemindModal(true);
+  };
+
+  const handleRemindChannelChange = (ch: 'WHATSAPP' | 'SMS' | 'EMAIL') => {
+    setRemindChannel(ch);
+    applyTemplateToModal(ch, remindLanguage, selectedInvoice);
+  };
+
+  const handleRemindLanguageChange = (lang: string) => {
+    setRemindLanguage(lang);
+    applyTemplateToModal(remindChannel, lang, selectedInvoice);
+  };
+
+  const handleTemplateDropdownChange = (tId: string) => {
+    setSelectedTemplateId(tId);
+    applyTemplateToModal(remindChannel, remindLanguage, selectedInvoice, tId);
   };
 
   const handleSendReminder = async () => {
@@ -326,6 +380,8 @@ export default function DashboardPage() {
           invoiceIds: [selectedInvoice.id],
           channel: remindChannel,
           language: remindLanguage,
+          templateId: selectedTemplateId || undefined,
+          subject: remindSubject || undefined,
           customMessage: customRemindMessage || undefined,
         }),
       });
@@ -349,11 +405,9 @@ export default function DashboardPage() {
     );
 
     if (match) {
-      setSelectedInvoice(match);
-      setCustomRemindMessage('');
-      setShowRemindModal(true);
+      handleOpenRemind(match);
     } else {
-      setSelectedInvoice({
+      const syntheticInvoice = {
         id: log.invoiceId || `diff_${Date.now()}`,
         billNo: log.billNo || 'Open Bill',
         outstandingAmount: log.currentBalance || 0,
@@ -366,9 +420,8 @@ export default function DashboardPage() {
           rawLedgerName: log.partyName || 'Customer',
           contacts: [],
         },
-      });
-      setCustomRemindMessage('');
-      setShowRemindModal(true);
+      };
+      handleOpenRemind(syntheticInvoice);
     }
   };
 
@@ -682,12 +735,8 @@ export default function DashboardPage() {
                             Mark Paid
                           </button>
                           <button
-                            onClick={() => {
-                              setSelectedInvoice(inv);
-                              setCustomRemindMessage('');
-                              setShowRemindModal(true);
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-1.5"
+                            onClick={() => handleOpenRemind(inv)}
+                            className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs"
                           >
                             <Send className="w-3.5 h-3.5" /> Remind
                           </button>
@@ -752,10 +801,10 @@ export default function DashboardPage() {
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => setRemindChannel('WHATSAPP')}
+                  onClick={() => handleRemindChannelChange('WHATSAPP')}
                   className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
                     remindChannel === 'WHATSAPP'
-                      ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20 shadow-xs'
                       : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
@@ -763,10 +812,10 @@ export default function DashboardPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setRemindChannel('SMS')}
+                  onClick={() => handleRemindChannelChange('SMS')}
                   className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
                     remindChannel === 'SMS'
-                      ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20'
+                      ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20 shadow-xs'
                       : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
@@ -774,10 +823,10 @@ export default function DashboardPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setRemindChannel('EMAIL')}
+                  onClick={() => handleRemindChannelChange('EMAIL')}
                   className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
                     remindChannel === 'EMAIL'
-                      ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-500/20'
+                      ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-500/20 shadow-xs'
                       : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
@@ -800,10 +849,10 @@ export default function DashboardPage() {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setRemindLanguage(item.id)}
+                    onClick={() => handleRemindLanguageChange(item.id)}
                     className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
                       remindLanguage === item.id
-                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20'
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20 shadow-xs'
                         : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                     }`}
                   >
@@ -813,50 +862,77 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Groq AI Button & Message Area */}
+            {/* Template Preset Dropdown */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                <span>Message Template</span>
+                <span className="text-[10px] text-indigo-600 font-semibold">Synced from Settings</span>
+              </label>
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => handleTemplateDropdownChange(e.target.value)}
+                className="w-full text-xs font-semibold py-2 px-3 rounded-xl border border-slate-200 bg-white hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+              >
+                {templates
+                  .filter((t) => t.channel === remindChannel && t.language === remindLanguage)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                {templates.filter((t) => t.channel === remindChannel && t.language === remindLanguage).length === 0 && (
+                  <option value="">Default {remindChannel} Template</option>
+                )}
+              </select>
+            </div>
+
+            {remindChannel === 'EMAIL' && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Email Subject Line
+                </label>
+                <input
+                  type="text"
+                  value={remindSubject}
+                  onChange={(e) => setRemindSubject(e.target.value)}
+                  placeholder="Email subject..."
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+            )}
+
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                   Reminder Message Content
                 </label>
-                <button
-                  type="button"
-                  onClick={handleGenerateWithGroq}
-                  disabled={generatingGroq}
-                  className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 transition disabled:opacity-50"
-                >
-                  <Sparkles className={`w-3.5 h-3.5 ${generatingGroq ? 'animate-spin' : ''}`} />
-                  {generatingGroq ? 'Drafting with Groq AI...' : '✨ Generate with Groq AI'}
-                </button>
+                <span className="text-[11px] text-slate-400 font-medium">Pre-populated from template & editable</span>
               </div>
               <textarea
                 value={customRemindMessage}
                 onChange={(e) => setCustomRemindMessage(e.target.value)}
-                placeholder="Click 'Generate with Groq AI' or type a personalized reminder message..."
-                rows={5}
-                className="w-full text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="Type or edit reminder message..."
+                rows={7}
+                className="w-full text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-sans leading-relaxed"
               />
             </div>
 
             {/* Destination notice */}
-            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700">
-              {remindChannel === 'EMAIL' ? (
-                <span>
-                  Recipient Email:{' '}
-                  <strong className="text-slate-900">
-                    {selectedInvoice?.customer?.contacts?.[0]?.emailId || 'Registered Contact Email'}
-                  </strong>
+            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-slate-500">Intended Customer:</span>
+                <span className="font-bold text-slate-900 font-mono">
+                  {remindChannel === 'EMAIL'
+                    ? selectedInvoice?.customer?.contacts?.[0]?.emailId || 'Registered Contact Email'
+                    : selectedInvoice?.customer?.contacts?.[0]?.mobileNumber ||
+                      selectedInvoice?.customer?.contacts?.[0]?.whatsappNumber ||
+                      'Registered Contact Mobile'}
                 </span>
-              ) : (
-                <span>
-                  Recipient Mobile:{' '}
-                  <strong className="text-slate-900">
-                    {selectedInvoice?.customer?.contacts?.[0]?.mobileNumber ||
-                     selectedInvoice?.customer?.contacts?.[0]?.whatsappNumber ||
-                     'Registered Contact Mobile'}
-                  </strong>
-                </span>
-              )}
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-amber-700 font-medium">
+                <span>Safe Test Routing:</span>
+                <span>Redirected to {remindChannel === 'EMAIL' ? 'jayesh@zuigo.ai' : '+918530383141'}</span>
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { renderTemplate } from '@/lib/template-renderer';
+import { 
+  renderTemplate, 
+  populateInvoiceTemplate, 
+  selectBestTemplate 
+} from '@/lib/template-renderer';
 import { generateSmartReminderWithGroq } from '@/lib/groq';
 import { isNonTradeOrExcludedAccount } from '@/lib/parser';
 import { 
@@ -15,20 +19,19 @@ export async function POST(req: NextRequest) {
     // Accept either invoiceIds or legacy dueIds
     const invoiceIds = body.invoiceIds || body.dueIds || [];
     const channel = (body.channel || 'WHATSAPP').toUpperCase() as 'WHATSAPP' | 'SMS' | 'EMAIL';
-    const { templateId, customMessage, useGroq = false, language = 'English' } = body;
+    const { templateId, customMessage, subject: requestedSubject, useGroq = false, language = 'English' } = body;
 
     if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return NextResponse.json({ error: 'At least one invoiceId or dueId is required' }, { status: 400 });
     }
 
-    const template = templateId
+    const allChannelTemplates = await prisma.messageTemplate.findMany({
+      where: { channel },
+    });
+
+    const specifiedTemplate = templateId
       ? await prisma.messageTemplate.findUnique({ where: { id: templateId } })
-      : (await prisma.messageTemplate.findFirst({
-          where: { channel, category: 'OVERDUE', language },
-        })) ||
-        (await prisma.messageTemplate.findFirst({
-          where: { channel, category: 'OVERDUE' },
-        }));
+      : null;
 
     const invoices = await prisma.invoice.findMany({
       where: { id: { in: invoiceIds } },
@@ -75,6 +78,18 @@ export async function POST(req: NextRequest) {
 
       const daysOverdue = Math.round((Date.now() - new Date(invoice.dueDate).getTime()) / (1000 * 60 * 60 * 24));
 
+      // Choose matching template
+      const activeTemplate =
+        specifiedTemplate ||
+        selectBestTemplate(allChannelTemplates, channel, language, daysOverdue);
+
+      const populated = populateInvoiceTemplate(
+        activeTemplate || { templateBody: `Payment Reminder: Bill ${invoice.billNo}` },
+        invoice,
+        'Abhiyadna Machine Tools',
+        'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234'
+      );
+
       let messageContent = '';
 
       if (customMessage && customMessage.trim().length > 0) {
@@ -94,23 +109,13 @@ export async function POST(req: NextRequest) {
           language,
         });
       } else {
-        const vars = {
-          customer_name: customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
-          contact_person: primaryContact?.personName || 'Sir / Madam',
-          due_amount: invoice.outstandingAmount,
-          remaining_balance: invoice.outstandingAmount,
-          due_date: formattedDueDate,
-          days_overdue: Math.max(0, daysOverdue),
-          company_name: 'Abhiyadna Machine Tools',
-          company_bank_details: 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234',
-        };
-
-        messageContent = template
-          ? renderTemplate(template.templateBody, vars)
-          : `Payment Reminder: ₹${invoice.outstandingAmount.toLocaleString('en-IN')} is outstanding for Bill ${invoice.billNo} from ${vars.customer_name}. Please clear your balance.`;
+        messageContent = populated.body;
       }
 
-      const subject = `Payment Reminder: Bill ${invoice.billNo} - Abhiyadna Machine Tools`;
+      const subject =
+        requestedSubject && requestedSubject.trim().length > 0
+          ? requestedSubject
+          : populated.subject;
 
       const dispatchResult = await dispatchMessage({
         tenantId: customer.tenantId,
@@ -145,7 +150,7 @@ export async function POST(req: NextRequest) {
         create: {
           tenantId: customer.tenantId,
           customerId: customer.id,
-          templateId: template?.id || null,
+          templateId: activeTemplate?.id || null,
           channel,
           triggerType: 'MANUAL',
           recipient: dispatchResult.effectiveRecipient,

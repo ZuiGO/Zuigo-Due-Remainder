@@ -664,3 +664,103 @@ export function renderTemplate(templateString: string, vars: TemplateVariables):
     return match;
   });
 }
+
+/**
+ * Automatically chooses the best matching template based on channel, language, and days overdue.
+ */
+export function selectBestTemplate(
+  templates: any[],
+  channel: string,
+  language: string,
+  daysOverdue: number = 0
+) {
+  if (!templates || templates.length === 0) return null;
+
+  let category = 'GENTLE';
+  if (daysOverdue > 15) {
+    category = 'FINAL_NOTICE';
+  } else if (daysOverdue > 0) {
+    category = 'OVERDUE';
+  } else if (daysOverdue === 0) {
+    category = 'ON_DUE';
+  }
+
+  // 1. Exact match on channel, language, and category
+  let match = templates.find(
+    (t) => t.channel === channel && t.language === language && t.category === category
+  );
+
+  // 2. Match on channel and language
+  if (!match) {
+    match = templates.find((t) => t.channel === channel && t.language === language);
+  }
+
+  // 3. Match on channel and category
+  if (!match) {
+    match = templates.find((t) => t.channel === channel && t.category === category);
+  }
+
+  // 4. Any match for this channel
+  if (!match) {
+    match = templates.find((t) => t.channel === channel);
+  }
+
+  return match || templates[0];
+}
+
+/**
+ * Injects invoice details into a message template's body and subject.
+ */
+export function populateInvoiceTemplate(
+  template: { templateBody: string; subject?: string | null },
+  inv: any,
+  companyName: string = 'Abhiyadna Machine Tools',
+  bankDetails: string = 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234'
+): { body: string; subject: string } {
+  if (!template || !inv) return { body: '', subject: '' };
+
+  const contact =
+    inv.customer?.contacts?.find((c: any) => c.isPrimary) ||
+    inv.customer?.contacts?.[0];
+  const person = contact?.personName || 'Sir / Madam';
+  const customerName = (
+    inv.customer?.partyName ||
+    inv.customer?.rawLedgerName ||
+    'Valued Customer'
+  )
+    .replace(/\[.*?\]/g, '')
+    .trim();
+  const amount = Number(inv.outstandingAmount || 0);
+  const formattedDueDate = inv.dueDate
+    ? new Date(inv.dueDate).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })
+    : 'Due';
+  const daysOverdue = Math.max(0, inv.daysOverdue || 0);
+
+  const vars: TemplateVariables = {
+    customer_name: customerName,
+    contact_person: person,
+    due_amount: amount.toLocaleString('en-IN'),
+    remaining_balance: amount.toLocaleString('en-IN'),
+    due_date: formattedDueDate,
+    days_overdue: daysOverdue,
+    company_name: companyName,
+    company_bank_details: bankDetails,
+    last_payment_amount: (
+      Number(inv.billAmount || 0) - amount > 0
+        ? Number(inv.billAmount || 0) - amount
+        : 0
+    ).toLocaleString('en-IN'),
+  };
+
+  const body = renderTemplate(template.templateBody, vars);
+  const subject = template.subject
+    ? renderTemplate(template.subject, vars)
+    : `Payment Reminder: Bill ${inv.billNo} - ${companyName}`;
+
+  return { body, subject };
+}
+
