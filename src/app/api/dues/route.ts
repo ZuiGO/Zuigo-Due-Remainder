@@ -44,20 +44,21 @@ export async function GET(req: NextRequest) {
       whereClause.OR = [
         { status: 'Payment Received' },
         { status: 'Closed' },
+        { status: 'Payment Received - Pending SAP Confirmation' },
         { outstandingAmount: { lte: 0 } },
       ];
     } else if (filter === 'OVERDUE') {
       whereClause.dueDate = { lt: todayStart };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Payment Received', 'Closed'] };
+      whereClause.status = { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
     } else if (filter === 'DUE_TODAY') {
       whereClause.dueDate = { gte: todayStart, lte: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Payment Received', 'Closed'] };
+      whereClause.status = { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
     } else if (filter === 'UPCOMING') {
       whereClause.dueDate = { gt: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Payment Received', 'Closed'] };
+      whereClause.status = { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
     }
 
     const invoices = await prisma.invoice.findMany({
@@ -109,7 +110,12 @@ export async function GET(req: NextRequest) {
         flaggedCustomerIds.add(inv.customerId);
       }
 
-      if (inv.status === 'Payment Received' || inv.status === 'Closed' || inv.outstandingAmount <= 0) {
+      if (
+        inv.status === 'Payment Received' ||
+        inv.status === 'Closed' ||
+        inv.status === 'Payment Received - Pending SAP Confirmation' ||
+        inv.outstandingAmount <= 0
+      ) {
         settledCount++;
         continue;
       }

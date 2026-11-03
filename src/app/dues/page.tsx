@@ -519,20 +519,24 @@ export default function DuesPage() {
                             className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border focus:outline-none transition ${
                               inv.status === 'Payment Received' || inv.status === 'Closed'
                                 ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                                : inv.status === 'Payment Received - Pending SAP Confirmation'
+                                ? 'bg-teal-50 border-teal-300 text-teal-800'
                                 : inv.status === 'Partially Paid'
                                 ? 'bg-amber-50 border-amber-300 text-amber-800'
                                 : inv.status === 'Promise to Pay'
                                 ? 'bg-sky-50 border-sky-300 text-sky-800'
-                                : inv.status === 'Disputed' || inv.status === 'Escalated'
+                                : inv.status === 'Disputed' || inv.status === 'Escalated' || inv.status === 'Disputed / Grace Period Expired'
                                 ? 'bg-purple-50 border-purple-300 text-purple-800'
                                 : 'bg-rose-50 border-rose-300 text-rose-800'
                             }`}
                           >
                             <option value="Pending">Pending</option>
                             <option value="Payment Received">Payment Received</option>
+                            <option value="Payment Received - Pending SAP Confirmation">Payment Received (Pending SAP)</option>
                             <option value="Partially Paid">Partially Paid</option>
                             <option value="Promise to Pay">Promise to Pay</option>
                             <option value="Disputed">Disputed</option>
+                            <option value="Disputed / Grace Period Expired">Grace Period Expired</option>
                             <option value="Escalated">Escalated</option>
                             <option value="Legal Notice">Legal Notice</option>
                             <option value="Closed">Closed</option>
@@ -548,7 +552,7 @@ export default function DuesPage() {
                           </span>
                         ) : (
                           <>
-                            {inv.status !== 'Payment Received' && inv.status !== 'Closed' && (
+                            {inv.status !== 'Payment Received' && inv.status !== 'Closed' && inv.status !== 'Payment Received - Pending SAP Confirmation' && (
                               <button
                                 onClick={() => handleStatusChange(inv.id, 'Payment Received')}
                                 title="Quick 1-Click Mark as Paid"

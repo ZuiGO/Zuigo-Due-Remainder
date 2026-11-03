@@ -147,7 +147,7 @@ export async function executeTenantDigestRun(
           where: {
             actionType: 'Follow-up Required',
             outstandingAmount: { gt: 0 },
-            status: { notIn: ['Payment Received', 'Closed'] },
+            status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] },
             OR: [
               { nextFollowUpDate: null },
               { nextFollowUpDate: { lte: now } },
@@ -387,7 +387,7 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
         where: {
           actionType: 'Follow-up Required',
           outstandingAmount: { gt: 0 },
-          status: { notIn: ['Payment Received', 'Closed'] },
+          status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] },
           OR: [
             { nextFollowUpDate: null },
             { nextFollowUpDate: { lte: now } },

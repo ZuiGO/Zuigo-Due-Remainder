@@ -56,7 +56,7 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
   const invoices = await prisma.invoice.findMany({
     where: {
       outstandingAmount: { gt: 0 },
-      status: { not: 'Payment Received' },
+      status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] },
       customer: {
         status: { not: 'EXCLUDED' },
       },
