@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
+import { isNonTradeOrExcludedAccount } from '@/lib/parser';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,8 +39,22 @@ export async function GET(req: NextRequest) {
       ];
     }
 
+    // Exclude internal non-customer accounts (TDS, Electricity Bill, etc.) from standard dues views
+    if (!whereClause.customer) whereClause.customer = {};
+    whereClause.customer.status = { not: 'EXCLUDED' };
+    whereClause.actionType = { not: 'No Action' };
+
     if (filter === 'FLAGGED') {
       whereClause.customer = { ...whereClause.customer, isFlagged: true };
+    } else if (filter === 'PENDING') {
+      whereClause.status = 'Pending';
+      whereClause.outstandingAmount = { gt: 0 };
+    } else if (filter === 'PARTIALLY_SETTLED' || filter === 'PARTIALLY SETTLED') {
+      whereClause.OR = [
+        { status: 'Partially Settled' },
+        { status: 'Partially Paid' },
+        { AND: [{ adjustment: { gt: 0 } }, { outstandingAmount: { gt: 0 } }] },
+      ];
     } else if (filter === 'SETTLED') {
       whereClause.OR = [
         { status: 'Settled' },
@@ -52,7 +67,7 @@ export async function GET(req: NextRequest) {
       whereClause.dueDate = { lt: todayStart };
       whereClause.outstandingAmount = { gt: 0 };
       whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
-    } else if (filter === 'DUE_TODAY') {
+    } else if (filter === 'DUE_TODAY' || filter === 'DUE TODAY') {
       whereClause.dueDate = { gte: todayStart, lte: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
       whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
@@ -104,25 +119,50 @@ export async function GET(req: NextRequest) {
     let dueTodayCount = 0;
     let overdueCount = 0;
     let settledCount = 0;
+    let pendingCount = 0;
+    let partiallySettledCount = 0;
+    let tradeInvoiceCount = 0;
     const flaggedCustomerIds = new Set<string>();
 
     for (const inv of allInvoices) {
+      // Exclude internal/tax/utility bills (TDS, Electricity Bill) from trade stats
+      if (
+        inv.customer.status === 'EXCLUDED' ||
+        isNonTradeOrExcludedAccount(inv.customer.rawLedgerName || inv.customer.partyName || '') ||
+        inv.actionType === 'No Action'
+      ) {
+        continue;
+      }
+
+      tradeInvoiceCount++;
+
       if (inv.customer.isFlagged) {
         flaggedCustomerIds.add(inv.customerId);
       }
 
-      if (
+      const isSettled =
         inv.status === 'Settled' ||
         inv.status === 'Payment Received' ||
         inv.status === 'Closed' ||
         inv.status === 'Payment Received - Pending SAP Confirmation' ||
-        inv.outstandingAmount <= 0
-      ) {
+        inv.outstandingAmount <= 0;
+
+      if (isSettled) {
         settledCount++;
         continue;
       }
 
       totalReceivables += inv.outstandingAmount;
+
+      if (
+        inv.status === 'Partially Settled' ||
+        inv.status === 'Partially Paid' ||
+        (inv.adjustment > 0 && inv.outstandingAmount > 0)
+      ) {
+        partiallySettledCount++;
+      } else {
+        pendingCount++;
+      }
 
       const dueTime = new Date(inv.dueDate).getTime();
       if (dueTime < todayStart.getTime()) {
@@ -221,8 +261,10 @@ export async function GET(req: NextRequest) {
         dueTodayCount,
         overdueCount,
         flaggedCount: flaggedCustomerIds.size,
+        pendingCount,
+        partiallySettledCount,
         settledCount,
-        totalCount: allInvoices.length,
+        totalCount: tradeInvoiceCount,
       },
       latestBatch: activeBatch,
       recentBatches,

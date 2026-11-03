@@ -26,6 +26,7 @@ export default function DuesPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
+  const [stats, setStats] = useState<any>(null);
 
   // Modals
   const [activeModal, setActiveModal] = useState<'REMIND' | 'UPLOAD' | null>(null);
@@ -62,6 +63,9 @@ export default function DuesPage() {
       const data = await res.json();
       if (data.success) {
         setInvoices(data.invoices || data.dues || []);
+        if (data.stats) {
+          setStats(data.stats);
+        }
       }
     } catch (e) {
       console.error('Fetch dues error:', e);
@@ -281,18 +285,38 @@ export default function DuesPage() {
 
       {/* Filter Tabs and Search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 text-xs font-semibold overflow-x-auto">
-          {['ALL', 'UPCOMING', 'DUE_TODAY', 'OVERDUE', 'FLAGGED', 'SETTLED'].map((tab) => (
+        <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto shadow-sm">
+          {[
+            { id: 'ALL', label: 'All', count: stats?.totalCount },
+            { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
+            { id: 'DUE_TODAY', label: 'Due Today', count: stats?.dueTodayCount },
+            { id: 'OVERDUE', label: 'Overdue', count: stats?.overdueCount },
+            { id: 'FLAGGED', label: 'Flagged', count: stats?.flaggedCount },
+            { id: 'PENDING', label: 'Pending', count: stats?.pendingCount },
+            { id: 'PARTIALLY_SETTLED', label: 'Partially Settled', count: stats?.partiallySettledCount },
+            { id: 'SETTLED', label: 'Settled', count: stats?.settledCount },
+          ].map((tab) => (
             <button
-              key={tab}
-              onClick={() => setFilter(tab)}
-              className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap ${
-                filter === tab
-                  ? 'bg-indigo-600 text-white shadow-sm'
+              key={tab.id}
+              onClick={() => setFilter(tab.id)}
+              className={`px-3 py-1.5 rounded-xl transition whitespace-nowrap flex items-center gap-1.5 ${
+                filter === tab.id
+                  ? 'bg-indigo-600 text-white shadow-sm font-bold'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               }`}
             >
-              {tab.replace('_', ' ')}
+              <span>{tab.label}</span>
+              {typeof tab.count === 'number' && (
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    filter === tab.id
+                      ? 'bg-indigo-700/90 text-white'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -495,6 +519,10 @@ export default function DuesPage() {
                         {isAdvance ? (
                           <span className="text-xs font-semibold text-slate-500 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
                             Advance on File
+                          </span>
+                        ) : inv.actionType === 'No Action' || inv.isExcluded || inv.customer?.status === 'EXCLUDED' ? (
+                          <span className="text-[11px] font-semibold text-slate-400 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
+                            Internal / Tax (No Reminders)
                           </span>
                         ) : (
                           <>

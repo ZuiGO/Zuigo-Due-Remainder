@@ -81,9 +81,13 @@ export interface ParsedCustomerRecord {
 }
 
 // Internal non-customer accounts to exclude from receivables
-const NON_CUSTOMER_KEYWORDS = [
+export const NON_CUSTOMER_KEYWORDS = [
   'electricity bill',
+  'electricity',
+  'msedcl',
+  'mseb',
   'tds on sales',
+  'tds payable',
   'tds',
   'sales return',
   'purchase return',
@@ -95,6 +99,16 @@ const NON_CUSTOMER_KEYWORDS = [
   'input tax',
   'output tax',
 ];
+
+export function isNonTradeOrExcludedAccount(partyName: string): boolean {
+  if (!partyName) return false;
+  const lower = partyName.toLowerCase().trim();
+  return (
+    NON_CUSTOMER_KEYWORDS.some((k) => lower.includes(k)) ||
+    /^electricity\b/i.test(lower) ||
+    /^tds\b/i.test(lower)
+  );
+}
 
 export function normalizeName(name: string): string {
   if (!name) return '';
@@ -312,9 +326,7 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
 
     // Exclusion Rules: TDS on Sales, Electricity Bill, Sales Return, or credit/advance vouchers
     const isExcluded =
-      /tds\s*on\s*sales/i.test(rawParty) ||
-      /electricity\s*bill/i.test(rawParty) ||
-      /sales\s*return/i.test(rawParty) ||
+      isNonTradeOrExcludedAccount(rawParty) ||
       isCreditOrAdvance ||
       outstandingAmount <= 0;
 

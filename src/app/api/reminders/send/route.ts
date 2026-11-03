@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { renderTemplate } from '@/lib/template-renderer';
 import { generateSmartReminderWithGroq } from '@/lib/groq';
+import { isNonTradeOrExcludedAccount } from '@/lib/parser';
 import { 
   dispatchMessage, 
   OVERRIDE_TARGET_PHONE, 
@@ -46,6 +47,18 @@ export async function POST(req: NextRequest) {
 
     for (const invoice of invoices) {
       const customer = invoice.customer;
+
+      if (
+        customer.status === 'EXCLUDED' ||
+        invoice.actionType === 'No Action' ||
+        isNonTradeOrExcludedAccount(customer.rawLedgerName || customer.partyName || '')
+      ) {
+        return NextResponse.json(
+          { error: `Cannot send payment reminder to ${customer.partyName || customer.rawLedgerName}: Internal utility/tax accounts (Electricity Bill, TDS, etc.) are strictly excluded from payment reminders.` },
+          { status: 400 }
+        );
+      }
+
       const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
 
       // Recipient from registered customer contacts

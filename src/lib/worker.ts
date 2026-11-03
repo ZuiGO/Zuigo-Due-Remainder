@@ -4,6 +4,7 @@ import { renderTemplate } from './template-renderer';
 import type { TemplateVariables } from './template-renderer';
 import { generateSmartReminderWithGroq } from './groq';
 import { dispatchMessage } from './dispatchers';
+import { isNonTradeOrExcludedAccount } from './parser';
 
 export interface AutomatedCheckSummary {
   timestamp: Date;
@@ -75,6 +76,16 @@ export async function runAutomatedReminderCheck(): Promise<AutomatedCheckSummary
 
   for (const invoice of invoices) {
     const customer = invoice.customer;
+
+    // Strictly avoid sending reminders for internal utility bills or TDS / tax accounts
+    if (
+      customer.status === 'EXCLUDED' ||
+      isNonTradeOrExcludedAccount(customer.rawLedgerName || customer.partyName || '') ||
+      invoice.actionType === 'No Action'
+    ) {
+      summary.skippedCount++;
+      continue;
+    }
 
     // Check if reminders are stopped/disabled for this customer
     if (customer.reminderEnabled === false) {

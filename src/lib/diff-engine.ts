@@ -1,5 +1,5 @@
 import prisma from './db';
-import type { ParsedSapBill, ParsedContactRecord } from './parser';
+import { type ParsedSapBill, type ParsedContactRecord, isNonTradeOrExcludedAccount } from './parser';
 
 export interface DiffReconciliationSummary {
   batchId: string;
@@ -84,6 +84,8 @@ export async function reconcileDailySapExport(
       });
     }
 
+    const isExcludedAccount = inv.isExcluded || isNonTradeOrExcludedAccount(inv.partyName);
+
     // Ensure customer exists in database
     const customer = await prisma.customer.upsert({
       where: {
@@ -98,6 +100,7 @@ export async function reconcileDailySapExport(
         partyName: inv.partyName,
         branchName: inv.branchName,
         station: inv.station,
+        ...(isExcludedAccount ? { status: 'EXCLUDED', reminderEnabled: false, totalOutstanding: 0 } : {}),
       },
       create: {
         tenantId,
@@ -107,7 +110,9 @@ export async function reconcileDailySapExport(
         partyName: inv.partyName,
         branchName: inv.branchName,
         station: inv.station,
-        status: 'ACTIVE',
+        status: isExcludedAccount ? 'EXCLUDED' : 'ACTIVE',
+        reminderEnabled: !isExcludedAccount,
+        totalOutstanding: 0,
       },
     });
 
@@ -128,9 +133,9 @@ export async function reconcileDailySapExport(
           outstandingAmount: inv.outstandingAmount,
           daysOverdue: inv.daysOverdue,
           agingBucket: inv.agingBucket,
-          actionType: inv.actionType,
-          priority: inv.priority,
-          status: inv.isExcluded ? 'Closed' : 'Pending',
+          actionType: isExcludedAccount ? 'No Action' : inv.actionType,
+          priority: isExcludedAccount ? 'Low' : inv.priority,
+          status: isExcludedAccount ? 'Closed' : 'Pending',
           narration: inv.narration,
         },
       });
@@ -205,7 +210,9 @@ export async function reconcileDailySapExport(
         }
 
         // If balance is positive, ensure status is Pending (clearing any stale Closed/Settled state)
-        if (newBal > 0 && (billStatus === 'Closed' || billStatus === 'Payment Received')) {
+        if (isExcludedAccount) {
+          billStatus = 'Closed';
+        } else if (newBal > 0 && (billStatus === 'Closed' || billStatus === 'Payment Received')) {
           billStatus = 'Pending';
         }
 
@@ -217,7 +224,8 @@ export async function reconcileDailySapExport(
             adjustment: inv.adjustment,
             daysOverdue: inv.daysOverdue,
             agingBucket: inv.agingBucket,
-            priority: inv.priority,
+            priority: isExcludedAccount ? 'Low' : inv.priority,
+            actionType: isExcludedAccount ? 'No Action' : inv.actionType,
             status: billStatus,
             dueDate: inv.dueDate,
             billDate: inv.billDate,
@@ -272,8 +280,20 @@ export async function reconcileDailySapExport(
   });
 
   for (const c of allTenantCustomers) {
+    if (c.status === 'EXCLUDED' || isNonTradeOrExcludedAccount(c.rawLedgerName || c.partyName || '')) {
+      await prisma.customer.update({
+        where: { id: c.id },
+        data: {
+          totalOutstanding: 0,
+          reminderEnabled: false,
+          status: 'EXCLUDED',
+        },
+      });
+      continue;
+    }
+
     const activeTotal = c.invoices
-      .filter(i => i.status !== 'Closed' && i.status !== 'Payment Received')
+      .filter(i => i.status !== 'Closed' && i.status !== 'Payment Received' && i.actionType !== 'No Action')
       .reduce((sum, i) => sum + i.outstandingAmount, 0);
 
     await prisma.customer.update({
