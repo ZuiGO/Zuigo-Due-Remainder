@@ -17,6 +17,7 @@ export interface GroqReminderInput {
   agingBucket: string;
   priority: string;
   channel: 'WHATSAPP' | 'SMS' | 'EMAIL';
+  language?: string;
   companyName?: string;
   bankDetails?: string;
 }
@@ -35,6 +36,7 @@ export async function generateSmartReminderWithGroq(input: GroqReminderInput): P
     agingBucket,
     priority,
     channel,
+    language = 'English',
     companyName = 'Abhiyadna Machine Tools',
     bankDetails = 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234',
   } = input;
@@ -59,6 +61,13 @@ export async function generateSmartReminderWithGroq(input: GroqReminderInput): P
       ? 'Format with professional WhatsApp markdown (*bold* for amounts and dates, clean emojis).'
       : 'Provide a structured, professional business email body.';
 
+  const langInstruction =
+    language === 'Hindi'
+      ? 'Language: Write the message entirely in professional, courteous business Hindi (Devanagari script).'
+      : language === 'Marathi'
+      ? 'Language: Write the message entirely in respectful, professional business Marathi (Devanagari script).'
+      : 'Language: Write the message in professional business English.';
+
   const prompt = `You are a financial credit controller for "${companyName}".
 Write a payment follow-up message for:
 - Customer: ${customerName}
@@ -71,6 +80,7 @@ Write a payment follow-up message for:
 - Channel: ${channel}
 - Bank Details: ${bankDetails}
 
+${langInstruction}
 Tone instructions: ${toneGuide}
 Formatting constraints: ${channelConstraints}
 

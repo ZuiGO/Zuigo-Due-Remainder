@@ -52,6 +52,7 @@ export default function DuesPage() {
 
   // Remind form states
   const [remindChannel, setRemindChannel] = useState<'WHATSAPP' | 'SMS' | 'EMAIL'>('WHATSAPP');
+  const [remindLanguage, setRemindLanguage] = useState('English');
   const [customRemindMessage, setCustomRemindMessage] = useState('');
   const [generatingGroq, setGeneratingGroq] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -207,6 +208,7 @@ export default function DuesPage() {
           agingBucket: selectedInvoice.agingBucket,
           priority: selectedInvoice.priority,
           channel: remindChannel,
+          language: remindLanguage,
         }),
       });
       const data = await res.json();
@@ -230,6 +232,7 @@ export default function DuesPage() {
         body: JSON.stringify({
           invoiceIds: [selectedInvoice.id],
           channel: remindChannel,
+          language: remindLanguage,
           customMessage: customRemindMessage || undefined,
         }),
       });
@@ -264,6 +267,7 @@ export default function DuesPage() {
       const data = await res.json();
       if (data.success) {
         setUploadMsg(data.message || 'Import successful!');
+        fetchDues(); // Refresh dues and stats immediately!
         setTimeout(() => {
           setActiveModal(null);
           setSelectedFile(null);
@@ -824,6 +828,36 @@ export default function DuesPage() {
                 </div>
               </div>
 
+              {/* Language Selection */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Reminder Language
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'English', label: '🇬🇧 English' },
+                    { id: 'Hindi', label: '🇮🇳 हिन्दी' },
+                    { id: 'Marathi', label: '🚩 मराठी' },
+                  ].map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => {
+                        setRemindLanguage(l.id);
+                        setCustomRemindMessage('');
+                      }}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
+                        remindLanguage === l.id
+                          ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20'
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -848,10 +882,13 @@ export default function DuesPage() {
                 />
               </div>
 
-              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
-                {remindChannel === 'EMAIL'
-                  ? 'Target: Direct link opening mailto: to jayesh@zuigo.ai'
-                  : 'Target: Direct link opening WhatsApp/SMS to +918530383141'}
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 flex items-center justify-between">
+                <span className="font-medium text-slate-500">Destination:</span>
+                <span className="font-bold text-slate-900 font-mono">
+                  {remindChannel === 'EMAIL'
+                    ? selectedInvoice.customer?.contacts?.[0]?.emailId || 'Registered Contact Email'
+                    : selectedInvoice.customer?.contacts?.[0]?.mobileNumber || 'Registered Contact Phone'}
+                </span>
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
@@ -873,9 +910,9 @@ export default function DuesPage() {
                   }`}
                 >
                   <Send className="w-3.5 h-3.5" />
-                  {remindChannel === 'WHATSAPP' && 'Open WhatsApp (+918530383141)'}
-                  {remindChannel === 'SMS' && 'Open SMS (+918530383141)'}
-                  {remindChannel === 'EMAIL' && 'Open Email (jayesh@zuigo.ai)'}
+                  {remindChannel === 'WHATSAPP' && 'Open WhatsApp & Send Reminder'}
+                  {remindChannel === 'SMS' && 'Send SMS Text Reminder'}
+                  {remindChannel === 'EMAIL' && 'Send Email Reminder & Log'}
                 </button>
               </div>
             </form>

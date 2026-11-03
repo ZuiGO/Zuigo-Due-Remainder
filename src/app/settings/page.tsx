@@ -86,10 +86,10 @@ export default function SettingsPage() {
     host: 'smtp.gmail.com',
     port: 587,
     secure: false,
-    user: 'jayesh@zuigo.ai',
+    user: '',
     pass: '',
-    fromEmail: 'jayesh@zuigo.ai',
-    fromName: 'Abhiyadna Accounts',
+    fromEmail: '',
+    fromName: 'Accounts Department',
     apiKey: '',
   });
 
@@ -625,11 +625,11 @@ export default function SettingsPage() {
           </div>
 
           <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-900">
-            <div className="font-bold">🧪 Active Test Routing Targets (Verified Sandbox Destinations):</div>
+            <div className="font-bold">🧪 Gateway Channels & Status:</div>
             <div className="mt-1 flex flex-wrap gap-4 font-mono text-[11px]">
-              <span>WhatsApp: <strong className="text-emerald-700">+918530383141</strong></span>
-              <span>SMS: <strong className="text-indigo-700">+918530383141</strong></span>
-              <span>Email: <strong className="text-sky-700">jayesh@zuigo.ai</strong></span>
+              <span>WhatsApp: <strong className="text-emerald-700">{waConfig.providerName}</strong> ({waConfig.isSandbox ? 'Sandbox' : 'Production'})</span>
+              <span>SMS: <strong className="text-indigo-700">{smsConfig.providerName}</strong> ({smsConfig.isSandbox ? 'Sandbox' : 'Production'})</span>
+              <span>Email: <strong className="text-sky-700">{emailConfig.providerName}</strong> ({emailConfig.isSandbox ? 'Sandbox' : 'Production'})</span>
             </div>
           </div>
 

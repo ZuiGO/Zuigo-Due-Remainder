@@ -204,13 +204,23 @@ export async function reconcileDailySapExport(
           }
         }
 
+        // If balance is positive, ensure status is Pending (clearing any stale Closed/Settled state)
+        if (newBal > 0 && (billStatus === 'Closed' || billStatus === 'Payment Received')) {
+          billStatus = 'Pending';
+        }
+
         await prisma.invoice.update({
           where: { id: existing.id },
           data: {
+            outstandingAmount: newBal,
+            billAmount: inv.billAmount,
+            adjustment: inv.adjustment,
             daysOverdue: inv.daysOverdue,
             agingBucket: inv.agingBucket,
             priority: inv.priority,
             status: billStatus,
+            dueDate: inv.dueDate,
+            billDate: inv.billDate,
           },
         });
 

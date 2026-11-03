@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
       agingBucket = 'Pending',
       priority = 'Medium',
       channel = 'WHATSAPP',
+      language = 'English',
     } = body;
 
     if (!customerName || outstandingAmount === undefined) {
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
       agingBucket,
       priority,
       channel,
+      language,
     });
 
     return NextResponse.json({

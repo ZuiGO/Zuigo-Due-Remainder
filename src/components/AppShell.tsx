@@ -181,7 +181,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               </div>
               <div className="truncate">
                 <div className="font-bold text-white truncate">{currentUser?.name || 'Admin'}</div>
-                <div className="text-[11px] text-slate-400 truncate">{currentUser?.email || 'jayesh@zuigo.ai'}</div>
+                <div className="text-[11px] text-slate-400 truncate">{currentUser?.email || 'Administrator'}</div>
               </div>
             </div>
             <button
@@ -256,10 +256,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             {/* User Avatar */}
             <div className="flex items-center gap-2 pl-3 border-l border-slate-200">
               <div className="w-8 h-8 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
-                {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'Z'}
+                {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'A'}
               </div>
               <div className="hidden lg:block text-left text-xs">
-                <div className="font-bold text-slate-800 leading-tight">{currentUser?.name || 'zuigo'}</div>
+                <div className="font-bold text-slate-800 leading-tight">{currentUser?.name || 'Administrator'}</div>
                 <div className="text-[10px] text-emerald-600 font-medium">Online</div>
               </div>
             </div>

@@ -54,6 +54,7 @@ export default function DashboardPage() {
   // Remind modal state
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [remindChannel, setRemindChannel] = useState<'WHATSAPP' | 'SMS' | 'EMAIL'>('WHATSAPP');
+  const [remindLanguage, setRemindLanguage] = useState<string>('English');
   const [customRemindMessage, setCustomRemindMessage] = useState('');
   const [generatingGroq, setGeneratingGroq] = useState(false);
   const [showRemindModal, setShowRemindModal] = useState(false);
@@ -233,12 +234,13 @@ export default function DashboardPage() {
       const data = await res.json();
       if (data.success) {
         setUploadMsg(data.message || 'Import successful!');
+        fetchDashboardData(); // Synchronize dashboard metrics immediately!
         setTimeout(() => {
           setShowUploadModal(false);
           setSelectedFiles([]);
           setUploadMsg(null);
           fetchDashboardData();
-        }, 2500);
+        }, 1800);
       } else {
         setUploadMsg(data.error || 'Failed to import file');
       }
@@ -267,6 +269,7 @@ export default function DashboardPage() {
           agingBucket: selectedInvoice.agingBucket,
           priority: selectedInvoice.priority,
           channel: remindChannel,
+          language: remindLanguage,
         }),
       });
       const data = await res.json();
@@ -289,6 +292,7 @@ export default function DashboardPage() {
         body: JSON.stringify({
           invoiceIds: [selectedInvoice.id],
           channel: remindChannel,
+          language: remindLanguage,
           customMessage: customRemindMessage || undefined,
         }),
       });
@@ -347,6 +351,16 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => fetchDashboardData()}
+            disabled={loading}
+            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition disabled:opacity-50"
+            title="Refresh and sync latest receivables & metrics"
+          >
+            <RefreshCw className={`w-4 h-4 text-slate-600 ${loading ? 'animate-spin' : ''}`} />
+            Sync Metrics
+          </button>
+
           <button
             onClick={() => setShowUploadModal(true)}
             className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition"
@@ -752,6 +766,33 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {/* Language Selector */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                Reminder Language
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'English', label: '🇬🇧 English' },
+                  { id: 'Hindi', label: '🇮🇳 हिन्दी' },
+                  { id: 'Marathi', label: '🚩 मराठी' },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setRemindLanguage(item.id)}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
+                      remindLanguage === item.id
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Groq AI Button & Message Area */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -777,11 +818,25 @@ export default function DashboardPage() {
               />
             </div>
 
-            {/* Test destination notice */}
-            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
-              {remindChannel === 'EMAIL'
-                ? 'Target Email: Opening mailto: for jayesh@zuigo.ai'
-                : 'Target Mobile: Opening wa.me/sms: for +918530383141'}
+            {/* Destination notice */}
+            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700">
+              {remindChannel === 'EMAIL' ? (
+                <span>
+                  Recipient Email:{' '}
+                  <strong className="text-slate-900">
+                    {selectedInvoice?.customer?.contacts?.[0]?.emailId || 'Registered Contact Email'}
+                  </strong>
+                </span>
+              ) : (
+                <span>
+                  Recipient Mobile:{' '}
+                  <strong className="text-slate-900">
+                    {selectedInvoice?.customer?.contacts?.[0]?.mobileNumber ||
+                     selectedInvoice?.customer?.contacts?.[0]?.whatsappNumber ||
+                     'Registered Contact Mobile'}
+                  </strong>
+                </span>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
@@ -804,9 +859,9 @@ export default function DashboardPage() {
                 }`}
               >
                 <Send className="w-3.5 h-3.5" />
-                {remindChannel === 'WHATSAPP' && 'Open WhatsApp (+918530383141) & Log'}
-                {remindChannel === 'SMS' && 'Open SMS (+918530383141) & Log'}
-                {remindChannel === 'EMAIL' && 'Open Email (jayesh@zuigo.ai) & Log'}
+                {remindChannel === 'WHATSAPP' && 'Open WhatsApp & Send Reminder'}
+                {remindChannel === 'SMS' && 'Send SMS Text Reminder'}
+                {remindChannel === 'EMAIL' && 'Send Email Reminder & Log'}
               </button>
             </div>
           </div>

@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     // Accept either invoiceIds or legacy dueIds
     const invoiceIds = body.invoiceIds || body.dueIds || [];
     const channel = (body.channel || 'WHATSAPP').toUpperCase() as 'WHATSAPP' | 'SMS' | 'EMAIL';
-    const { templateId, customMessage, useGroq = false } = body;
+    const { templateId, customMessage, useGroq = false, language = 'English' } = body;
 
     if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return NextResponse.json({ error: 'At least one invoiceId or dueId is required' }, { status: 400 });
@@ -22,9 +22,12 @@ export async function POST(req: NextRequest) {
 
     const template = templateId
       ? await prisma.messageTemplate.findUnique({ where: { id: templateId } })
-      : await prisma.messageTemplate.findFirst({
+      : (await prisma.messageTemplate.findFirst({
+          where: { channel, category: 'OVERDUE', language },
+        })) ||
+        (await prisma.messageTemplate.findFirst({
           where: { channel, category: 'OVERDUE' },
-        });
+        }));
 
     const invoices = await prisma.invoice.findMany({
       where: { id: { in: invoiceIds } },
@@ -45,8 +48,11 @@ export async function POST(req: NextRequest) {
       const customer = invoice.customer;
       const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
 
-      // Forced test routing as requested by user
-      const effectiveRecipient = channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE;
+      // Recipient from registered customer contacts
+      const effectiveRecipient =
+        channel === 'EMAIL'
+          ? (primaryContact?.emailId || undefined)
+          : (primaryContact?.mobileNumber || undefined);
 
       const formattedDueDate = new Date(invoice.dueDate).toLocaleDateString('en-IN', {
         day: '2-digit',
@@ -61,7 +67,7 @@ export async function POST(req: NextRequest) {
       if (customMessage && customMessage.trim().length > 0) {
         messageContent = customMessage;
       } else if (useGroq) {
-        // AI Generated reminder
+        // AI Generated reminder in chosen language
         messageContent = await generateSmartReminderWithGroq({
           customerName: customer.rawLedgerName.replace(/\[.*?\]/g, '').trim(),
           contactPerson: primaryContact?.personName || 'Sir / Madam',
@@ -72,6 +78,7 @@ export async function POST(req: NextRequest) {
           agingBucket: invoice.agingBucket,
           priority: invoice.priority,
           channel,
+          language,
         });
       } else {
         const vars = {
@@ -93,11 +100,11 @@ export async function POST(req: NextRequest) {
       const subject = `Payment Reminder: Bill ${invoice.billNo} - Abhiyadna Machine Tools`;
 
       const dispatchResult = await dispatchMessage({
+        tenantId: customer.tenantId,
         channel,
         recipient: effectiveRecipient,
         messageContent,
         subject,
-        isSandbox: true,
       });
 
       // Record log in PostgreSQL
@@ -113,7 +120,7 @@ export async function POST(req: NextRequest) {
           },
         },
         update: {
-          recipient: effectiveRecipient,
+          recipient: dispatchResult.effectiveRecipient,
           subject,
           messageContent,
           status: dispatchResult.status,
@@ -128,7 +135,7 @@ export async function POST(req: NextRequest) {
           templateId: template?.id || null,
           channel,
           triggerType: 'MANUAL',
-          recipient: effectiveRecipient,
+          recipient: dispatchResult.effectiveRecipient,
           subject,
           status: dispatchResult.status,
           messageContent,

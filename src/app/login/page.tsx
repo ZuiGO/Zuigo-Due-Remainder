@@ -7,7 +7,7 @@ import { BellRing, Lock, Mail, ArrowRight, ShieldCheck, AlertCircle } from 'luci
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('jayesh@zuigo.ai');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

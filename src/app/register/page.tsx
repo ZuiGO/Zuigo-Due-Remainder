@@ -7,8 +7,8 @@ import { BellRing, Lock, Mail, User, ArrowRight, ShieldCheck, AlertCircle } from
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [name, setName] = useState('Zuigo Admin');
-  const [email, setEmail] = useState('jayesh@zuigo.ai');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -72,7 +72,7 @@ export default function RegisterPage() {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Jayesh / Admin"
+                placeholder="Administrator"
                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
               />
             </div>
@@ -89,7 +89,7 @@ export default function RegisterPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="jayesh@zuigo.ai"
+                placeholder="admin@example.com"
                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
               />
             </div>

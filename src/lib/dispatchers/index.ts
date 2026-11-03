@@ -18,6 +18,8 @@ export interface DispatchRequest {
   messageContent: string;
   subject?: string;
   isSandbox?: boolean;
+  providerName?: string;
+  customConfig?: Record<string, any>;
 }
 
 export interface DispatchResponse {
@@ -36,19 +38,23 @@ export interface DispatchResponse {
 export function buildChannelActionUrl(
   channel: 'WHATSAPP' | 'SMS' | 'EMAIL',
   messageContent: string,
-  subject: string = 'Payment Due Reminder'
+  subject: string = 'Payment Due Reminder',
+  recipient?: string
 ): string {
+  const targetPhone = recipient || OVERRIDE_TARGET_PHONE;
+  const targetEmail = recipient || OVERRIDE_TARGET_EMAIL;
+
   if (channel === 'WHATSAPP') {
-    const cleanDigits = OVERRIDE_TARGET_PHONE.replace(/\D/g, '');
+    const cleanDigits = targetPhone.replace(/\D/g, '');
     return `https://wa.me/${cleanDigits}?text=${encodeURIComponent(messageContent)}`;
   }
 
   if (channel === 'SMS') {
-    return `sms:${OVERRIDE_TARGET_PHONE}?body=${encodeURIComponent(messageContent)}`;
+    return `sms:${targetPhone}?body=${encodeURIComponent(messageContent)}`;
   }
 
   if (channel === 'EMAIL') {
-    return `mailto:${OVERRIDE_TARGET_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(messageContent)}`;
+    return `mailto:${targetEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(messageContent)}`;
   }
 
   return '#';
@@ -68,13 +74,12 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     isSandbox: forceSandbox,
   } = req;
 
-  // 1. Initial recipient placeholder (Email strictly locked to jayesh@zuigo.ai)
+  // 1. Initial recipient placeholder
   let effectiveRecipient =
-    channel === 'EMAIL'
-      ? OVERRIDE_TARGET_EMAIL
-      : recipient || OVERRIDE_TARGET_PHONE;
+    recipient ||
+    (channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE);
 
-  const actionUrl = buildChannelActionUrl(channel, messageContent, subject);
+  const actionUrl = buildChannelActionUrl(channel, messageContent, subject, effectiveRecipient);
 
   // 2. Fetch tenant integration settings for this channel
   let integration = null;
@@ -98,15 +103,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
   const isSandbox =
     forceSandbox !== undefined ? forceSandbox : (integration?.isSandbox ?? true);
 
-  // Email destinations are strictly locked to jayesh@zuigo.ai for all email config tests
-  if (channel === 'EMAIL') {
-    effectiveRecipient = OVERRIDE_TARGET_EMAIL;
-  } else if (isSandbox) {
-    effectiveRecipient = OVERRIDE_TARGET_PHONE;
-  } else {
-    effectiveRecipient = recipient || OVERRIDE_TARGET_PHONE;
-  }
-
+  // 3. Resolve configuration and active provider
   let config: Record<string, any> = {};
   if (integration?.configJson) {
     try {
@@ -116,26 +113,53 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     }
   }
 
-  const provider = integration?.providerName || 'SIMULATOR';
+  // Merge runtime custom config if supplied (e.g. from live gateway test)
+  if (req.customConfig) {
+    config = { ...config, ...req.customConfig };
+  }
+
+  const provider = req.providerName || integration?.providerName || 'SIMULATOR';
+
+  // Determine effective recipient
+  if (recipient) {
+    effectiveRecipient = recipient;
+  } else if (channel === 'EMAIL') {
+    effectiveRecipient = config.user || config.fromEmail || OVERRIDE_TARGET_EMAIL;
+  } else if (isSandbox) {
+    effectiveRecipient = OVERRIDE_TARGET_PHONE;
+  } else {
+    effectiveRecipient = recipient || OVERRIDE_TARGET_PHONE;
+  }
 
   try {
     // ----------------------------------------------------
     // EMAIL DISPATCH
     // ----------------------------------------------------
     if (channel === 'EMAIL') {
-      if (!isSandbox && provider === 'SMTP' && config.host && config.user && config.pass) {
+      if (provider === 'SMTP' && config.host && config.user && config.pass) {
+        const portNum = Number(config.port) || 587;
+        const isSecure = config.secure !== undefined ? Boolean(config.secure) : portNum === 465;
+
         const transporter = nodemailer.createTransport({
           host: config.host,
-          port: Number(config.port) || 587,
-          secure: Boolean(config.secure),
+          port: portNum,
+          secure: isSecure,
           auth: {
             user: config.user,
             pass: config.pass,
           },
+          tls: {
+            rejectUnauthorized: false,
+          },
+          connectionTimeout: 12000,
         });
 
+        const fromAddress = config.fromEmail
+          ? (config.fromName ? `"${config.fromName}" <${config.fromEmail}>` : config.fromEmail)
+          : config.user;
+
         const info = await transporter.sendMail({
-          from: config.fromEmail || config.user,
+          from: fromAddress,
           to: effectiveRecipient,
           subject,
           text: messageContent,
@@ -151,7 +175,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
         };
       }
 
-      if (!isSandbox && provider === 'RESEND' && config.apiKey) {
+      if (provider === 'RESEND' && config.apiKey) {
         const res = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -317,12 +341,11 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     };
   } catch (err: any) {
     console.error(`Dispatch error on channel ${channel}:`, err);
-    // Even if external network fails, return sandbox action URL with error note
     return {
-      success: true,
-      providerResponseId: `simulated_fallback_${Date.now()}`,
-      status: 'SENT',
-      errorMessage: `Live gateway call skipped (${err.message}). Defaulted to sandbox test routing.`,
+      success: false,
+      providerResponseId: `failed_${Date.now()}`,
+      status: 'FAILED',
+      errorMessage: err?.message || String(err),
       timestamp: new Date(),
       actionUrl,
       effectiveRecipient,
