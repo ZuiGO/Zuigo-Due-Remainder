@@ -211,5 +211,4 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ## 👥 Authors & License
 
 - **Organization:** ZuiGO Private Limited
-- **Project Lead:** `zuigo <jayesh@zuigo.ai>`
 - **License:** Proprietary & Confidential — All rights reserved.
