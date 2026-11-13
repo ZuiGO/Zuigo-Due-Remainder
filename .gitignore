@@ -38,3 +38,9 @@ Thumbs.db
 !.env.example
 node_modules/
 .next/
+
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
