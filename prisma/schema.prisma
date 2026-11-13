@@ -1,0 +1,308 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Tenant {
+  id                  String               @id @default(cuid())
+  slug                String               @unique // e.g. "abmato", "xyz-corp"
+  companyName         String               // e.g. "Abhiyadna Machine Tools"
+  logoUrl             String?
+  brandColor          String               @default("#4f46e5")
+  address             String?
+  contactEmail        String?
+  contactPhone        String?
+  bankName            String?              @default("HDFC Bank")
+  bankAccountNo       String?              @default("50200012345678")
+  bankIfscCode        String?              @default("HDFC0001234")
+  bankUpiId           String?              @default("abmato@hdfcbank")
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  users               User[]
+  customers           Customer[]
+  invoices            Invoice[]
+  importBatches       ImportBatch[]
+  dispatchRuns        DispatchRun[]
+  messageTemplates    MessageTemplate[]
+  integrationSettings IntegrationSetting[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String?
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("ADMIN") // ADMIN | ACCOUNTS_MANAGER | ACCOUNTS_EXECUTIVE | VIEWER
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Customer {
+  id                        String              @id @default(cuid())
+  tenantId                  String
+  tenant                    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchCode                String              @default("ABMATO")
+  ledgerCode                String
+  rawLedgerName             String
+  partyName                 String?
+  station                   String?
+  branchName                String?
+  status                    String              @default("ACTIVE") // ACTIVE | FLAGGED | SETTLED | EXCLUDED
+  isFlagged                 Boolean             @default(false)
+  flaggedAt                 DateTime?
+  flagReason                String?
+  consecutiveRemindersCount Int                 @default(0)
+  overallPriority           String              @default("Medium") // High | Medium | Low
+  totalOutstanding          Float               @default(0)
+  reminderEnabled           Boolean             @default(true)
+  pauseNote                 String?
+  reminderMode              String              @default("SEMI_AUTOMATED") // SEMI_AUTOMATED | FULLY_AUTOMATED
+  preferredLanguage         String              @default("English") // English | Hindi | Marathi
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+
+  contacts                  CustomerContact[]
+  invoices                  Invoice[]
+  reminderSchedules         ReminderSchedule[]
+  reminderLogs              ReminderLog[]
+
+  @@unique([tenantId, branchCode, ledgerCode])
+}
+
+model CustomerContact {
+  id              String    @id @default(cuid())
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  personName      String?
+  designation     String?
+  mobileNumber    String?
+  whatsappNumber  String?
+  emailId         String?
+  isPrimary       Boolean   @default(true)
+  isActive        Boolean   @default(true)
+  optOutSms       Boolean   @default(false)
+  optOutWhatsapp  Boolean   @default(false)
+  emailInvalid    Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Invoice {
+  id                         String                  @id @default(cuid())
+  tenantId                   String
+  tenant                     Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId                 String
+  customer                   Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  branchCode                 String                  @default("ABMATO")
+  ledgerCode                 String
+  billNo                     String
+  billDate                   DateTime
+  dueDate                    DateTime
+  billAmount                 Float
+  adjustment                 Float                   @default(0)
+  outstandingAmount          Float
+  previousOutstandingAmount  Float?
+  daysOverdue                Int                     @default(0)
+  agingBucket                String                  @default("Not Yet Due") // Not Yet Due | 1-30 Days | 31-60 Days | 61-90 Days | 90+ Days
+  actionType                 String                  @default("Follow-up Required") // Follow-up Required | No Action
+  priority                   String                  @default("Medium") // High | Medium | Low
+  status                     String                  @default("Pending") // Pending | Payment Received | Partially Paid | Promise to Pay | Disputed | Escalated | Legal Notice | Closed
+  narration                  String?
+  lastFollowUpDate           DateTime?
+  nextFollowUpDate           DateTime?
+  manualOverride             Boolean                 @default(false)
+  manualMarkedDate           DateTime?
+  manualMarkedBy             String?
+  gracePeriodExpiresOn       DateTime?
+  importBatchId              String?
+  importBatch                ImportBatch?            @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+
+  payments                   PaymentRecord[]
+  commitments                PromiseToPayCommitment[]
+  installments               Installment[]
+  reminderLogBills           ReminderLogBills[]
+  diffLogs                   DailyDiffLog[]
+
+  @@unique([tenantId, branchCode, ledgerCode, billNo])
+}
+
+model PromiseToPayCommitment {
+  id             String    @id @default(cuid())
+  invoiceId      String
+  invoice        Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  promisedAmount Float
+  promisedDate   DateTime
+  status         String    @default("ACTIVE") // ACTIVE | FULFILLED | BROKEN
+  notes          String?
+  recordedBy     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model ImportBatch {
+  id                   String         @id @default(cuid())
+  tenantId             String
+  tenant               Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fileName             String
+  importedAt           DateTime       @default(now())
+  rowCount             Int            @default(0)
+  newEntriesCount      Int            @default(0)
+  sameEntriesCount     Int            @default(0)
+  partialPaymentsCount Int            @default(0)
+  settledEntriesCount  Int            @default(0)
+  excludedCount        Int            @default(0)
+  status               String         @default("SUCCESS") // SUCCESS | PARTIAL | FAILED
+  errorDetail          String?
+
+  invoices             Invoice[]
+  diffLogs             DailyDiffLog[]
+}
+
+model DailyDiffLog {
+  id              String       @id @default(cuid())
+  batchId         String
+  batch           ImportBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  invoiceId       String?
+  invoice         Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  partyName       String?
+  ledgerCode      String?
+  billNo          String?
+  diffType        String       // NEW_ENTRY | SAME_ENTRY | PARTIAL_PAYMENT | SETTLED
+  previousBalance Float?
+  currentBalance  Float?
+  notes           String?
+  createdAt       DateTime     @default(now())
+}
+
+model DispatchRun {
+  id                 String        @id @default(cuid())
+  tenantId           String
+  tenant             Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runDate            DateTime      @default(now())
+  startedAt          DateTime      @default(now())
+  completedAt        DateTime?
+  status             String        @default("RUNNING") // RUNNING | COMPLETED | FAILED
+  customersProcessed Int           @default(0)
+  messagesSent       Int           @default(0)
+  messagesFailed     Int           @default(0)
+
+  reminderLogs       ReminderLog[]
+}
+
+model Installment {
+  id                String   @id @default(cuid())
+  invoiceId         String
+  invoice           Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  installmentNumber Int
+  amount            Float
+  dueDate           DateTime
+  status            String   @default("PENDING") // PENDING | PAID
+  createdAt         DateTime @default(now())
+}
+
+model PaymentRecord {
+  id              String    @id @default(cuid())
+  invoiceId       String?
+  invoice         Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amountPaid      Float
+  paymentDate     DateTime  @default(now())
+  paymentMode     String    @default("BANK_TRANSFER") // BANK_TRANSFER | UPI | CHEQUE | CASH | SAP_DIFF_DETECTED
+  referenceNumber String?   // UTR / Cheque No
+  notes           String?
+  createdAt       DateTime  @default(now())
+}
+
+model ReminderSchedule {
+  id                     String    @id @default(cuid())
+  customerId             String?   // Null for global system default
+  customer               Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reminder1DaysBefore    Int       @default(3)
+  reminder2DaysAfter     Int       @default(0)
+  reminder3DaysAfter     Int       @default(3)
+  reminder4DaysAfter     Int       @default(7)
+  reminder5DaysAfter     Int       @default(15)
+  maxRemindersBeforeFlag Int       @default(5)
+  channels               String    @default("WHATSAPP,SMS,EMAIL")
+  autoReminderEnabled    Boolean   @default(true)
+  messagesPerDay         Int       @default(1)
+  isActive               Boolean   @default(true)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+}
+
+model MessageTemplate {
+  id                 String        @id @default(cuid())
+  tenantId           String?
+  tenant             Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel            String        // WHATSAPP | SMS | EMAIL
+  name               String
+  category           String        // GENTLE | ON_DUE | OVERDUE | URGENT | FINAL_NOTICE | PAYMENT_RECEIPT | DIGEST | AI_CUSTOM
+  agingBucket        String?       // Not Yet Due | 1-30 Days | 31-60 Days | 61-90 Days | 90+ Days
+  language           String        @default("English") // English | Hindi | Marathi
+  subject            String?       // Used for emails
+  templateBody       String
+  templateStatus     String        @default("APPROVED") // DRAFT | SUBMITTED | APPROVED | REJECTED
+  providerTemplateId String?
+  isDefault          Boolean       @default(false)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  reminderLogs       ReminderLog[]
+}
+
+model IntegrationSetting {
+  id           String   @id @default(cuid())
+  tenantId     String?
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  providerType String   // WHATSAPP | SMS | EMAIL | GROQ_AI
+  providerName String   // META_CLOUD_API | TWILIO | MSG91 | SMTP | GROQ | SIMULATOR
+  configJson   String   // JSON payload with credentials
+  isEnabled    Boolean  @default(true)
+  isSandbox    Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+}
+
+model ReminderLog {
+  id                  String             @id @default(cuid())
+  tenantId            String
+  customerId          String
+  customer            Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  dispatchRunId       String?
+  dispatchRun         DispatchRun?       @relation(fields: [dispatchRunId], references: [id], onDelete: SetNull)
+  templateId          String?
+  template            MessageTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  channel             String             // WHATSAPP | SMS | EMAIL
+  triggerType         String             @default("AUTOMATIC") // AUTOMATIC | MANUAL | APPROVED_QUEUE
+  recipient           String
+  status              String             @default("SENT") // QUEUED | SENT | DELIVERED | READ | FAILED
+  billsIncludedCount  Int                @default(1)
+  messageContent      String
+  subject             String?
+  providerResponseId  String?
+  errorMessage        String?
+  sentDate            String             // YYYY-MM-DD for composite idempotency index
+  dispatchedAt        DateTime           @default(now())
+
+  bills               ReminderLogBills[]
+
+  @@unique([tenantId, customerId, channel, sentDate])
+}
+
+model ReminderLogBills {
+  reminderLogId String
+  reminderLog   ReminderLog @relation(fields: [reminderLogId], references: [id], onDelete: Cascade)
+  invoiceId     String
+  invoice       Invoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@id([reminderLogId, invoiceId])
+}
