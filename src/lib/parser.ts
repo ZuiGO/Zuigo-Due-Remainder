@@ -276,6 +276,58 @@ export function detectFeedType(workbook: XLSX.WorkBook): FeedType {
 }
 
 /**
+ * Safely parses string or number to a clean float, stripping commas, currency symbols, and extra spaces.
+ */
+export function parseNumeric(val: any): number {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const str = String(val).trim();
+  if (!str) return 0;
+  const isNegative = /^\(.*\)$/.test(str) || str.startsWith('-');
+  const cleanStr = str.replace(/,/g, '').replace(/[^\d.]/g, '');
+  const num = parseFloat(cleanStr);
+  if (isNaN(num)) return 0;
+  return isNegative ? -num : num;
+}
+
+/**
+ * Case-insensitive, whitespace-trimmed, and punctuation-normalized lookup for row objects.
+ */
+export function getRowVal(row: any, candidateKeys: string[]): any {
+  if (!row || typeof row !== 'object') return undefined;
+
+  // 1. Direct exact key lookup
+  for (const k of candidateKeys) {
+    if (row[k] !== undefined && row[k] !== null && row[k] !== '') {
+      return row[k];
+    }
+  }
+
+  // 2. Normalized key lookup (case-insensitive, trimmed, spaces collapsed)
+  const rowKeys = Object.keys(row);
+  for (const candidate of candidateKeys) {
+    const cLower = candidate.toLowerCase().trim();
+    const cNorm = cLower.replace(/[^a-z0-9]/g, '');
+    for (const rk of rowKeys) {
+      const rLower = rk.toLowerCase().trim();
+      if (rLower === cLower) {
+        if (row[rk] !== undefined && row[rk] !== null && row[rk] !== '') {
+          return row[rk];
+        }
+      }
+      const rNorm = rLower.replace(/[^a-z0-9]/g, '');
+      if (rNorm === cNorm && rNorm.length > 0) {
+        if (row[rk] !== undefined && row[rk] !== null && row[rk] !== '') {
+          return row[rk];
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Parses SAP Dues Export (Outstanding Receivable) from HTML ALV, XLSX, or CSV.
  * Automatically skips company letterhead and discards Grand Total.
  */
@@ -289,28 +341,59 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
   const parsedBills: ParsedSapBill[] = [];
 
   for (const row of rawRows) {
-    const rawLedger = String(row['Ledger Code'] || row['ledger_code'] || row['LedgerCode'] || '').trim();
-    const rawParty = String(row['Party Name'] || row['party_name'] || row['PartyName'] || '').trim();
+    const rawLedger = String(
+      getRowVal(row, ['Ledger Code', 'ledger_code', 'LedgerCode', 'Ledger', 'Account Code']) || ''
+    ).trim();
+    const rawParty = String(
+      getRowVal(row, ['Party Name', 'party_name', 'PartyName', 'Customer Name', 'Party']) || ''
+    ).trim();
 
     // Discard Grand Total or empty rows
     if (!rawLedger || /grand\s*total/i.test(rawLedger) || /grand\s*total/i.test(rawParty)) {
       continue;
     }
 
-    const billNo = String(row['Bill No'] || row['bill_no'] || row['BillNo'] || '').trim();
+    const billNo = String(
+      getRowVal(row, ['Bill No', 'bill_no', 'BillNo', 'Invoice No', 'Invoice #', 'Bill #']) || ''
+    ).trim();
     if (!billNo) continue;
 
-    const branchCode = String(row['Branch Code'] || row['branch_code'] || 'ABMATO').trim();
-    const branchName = row['Branch Name'] ? String(row['Branch Name']).trim() : undefined;
-    const station = row['Station'] ? String(row['Station']).trim() : undefined;
-    const narration = row['Narration'] ? String(row['Narration']).trim() : undefined;
+    const branchCode = String(
+      getRowVal(row, ['Branch Code', 'branch_code', 'BranchCode', 'Branch']) || 'ABMATO'
+    ).trim();
+    const branchName = getRowVal(row, ['Branch Name', 'branch_name', 'BranchName'])
+      ? String(getRowVal(row, ['Branch Name', 'branch_name', 'BranchName'])).trim()
+      : undefined;
+    const station = getRowVal(row, ['Station', 'station', 'City', 'Location'])
+      ? String(getRowVal(row, ['Station', 'station', 'City', 'Location'])).trim()
+      : undefined;
+    const narration = getRowVal(row, ['Narration', 'narration', 'Remarks', 'Description'])
+      ? String(getRowVal(row, ['Narration', 'narration', 'Remarks', 'Description'])).trim()
+      : undefined;
 
-    const billDate = parseDate(row['Bill Date'] || row['bill_date']);
-    const dueDate = parseDate(row['Due Date'] || row['due_date']);
+    const billDate = parseDate(getRowVal(row, ['Bill Date', 'bill_date', 'BillDate', 'Invoice Date']));
+    const dueDate = parseDate(getRowVal(row, ['Due Date', 'due_date', 'DueDate']));
 
-    const rawBillAmt = Number(row['BillAmt'] || row['Bill Amount'] || row['bill_amount'] || 0);
-    const rawAdjustment = Number(row['Adjustment'] || row['adjustment'] || 0);
-    const rawOutstanding = Number(row['Outstanding'] || row['Outstanding Amount'] || row['outstanding_amount'] || 0);
+    const rawBillAmt = parseNumeric(
+      getRowVal(row, [
+        'BillAmt', 'Bill Amount', 'bill_amount', 'Bill Amt', 'Invoice Amount',
+        'Invoice Amt', 'Amount', 'amount', 'Gross Amount', 'Total Amount', 'Total', 'Debit', 'Dr Amount'
+      ])
+    );
+    const rawAdjustment = parseNumeric(
+      getRowVal(row, [
+        'Adjustment', 'adjustment', 'Paid', 'paid', 'Paid Amount', 'paid_amount',
+        'Paid/Adjusted', 'Paid / Adjusted', 'Payment', 'payment', 'Adjusted', 'adjusted',
+        'Adjusted Amount', 'Received', 'received', 'Advance', 'advance', 'Paid Amt', 'Adj Amt', 'Credit', 'Cr Amount'
+      ])
+    );
+    const rawOutstanding = parseNumeric(
+      getRowVal(row, [
+        'Outstanding', 'outstanding', 'Outstanding Amount', 'outstanding_amount',
+        'Outstanding Amt', 'Balance', 'balance', 'Balance Amount', 'Due Amount', 'Due Amt',
+        'Pending Amount', 'Pending Amt', 'Net Amount', 'Balance Due', 'Net Due'
+      ])
+    );
 
     // Strictly exclude rows with negative amounts (e.g. -123 or -49899 etc.)
     if (rawBillAmt < 0 || rawOutstanding < 0) {
@@ -322,12 +405,34 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
     // advance carries narration like "Agst: AMT/..., Adv: AD0010"; it is still a real open bill.
     const isCreditOrAdvance = isAdvanceOrCreditBillNo(billNo);
 
-    const billAmount = Math.abs(rawBillAmt);
+    const billAmount = Math.round(Math.abs(rawBillAmt) * 100) / 100;
     // If it is an advance receipt from a customer, the money was received upfront as an advance deposit
     const adjustment = isCreditOrAdvance && rawAdjustment === 0
       ? billAmount
-      : Math.abs(rawAdjustment);
-    const outstandingAmount = isCreditOrAdvance ? 0 : Math.max(0, rawOutstanding);
+      : Math.round(Math.abs(rawAdjustment) * 100) / 100;
+
+    // Enforce fundamental accounting identity: Outstanding Due = max(0, Bill Amount - Paid / Adjusted)
+    let outstandingAmount = 0;
+    if (isCreditOrAdvance) {
+      outstandingAmount = 0;
+    } else if (rawOutstanding > 0) {
+      // If outstanding was provided in sheet:
+      // If adjustment > 0 and the sheet did NOT subtract it (rawOutstanding >= billAmount or rawOutstanding > billAmount - adjustment),
+      // we strictly subtract the paid/adjusted amount.
+      if (adjustment > 0 && (rawOutstanding >= billAmount || rawOutstanding > Math.round((billAmount - adjustment) * 100) / 100)) {
+        outstandingAmount = Math.max(0, Math.round((billAmount - adjustment) * 100) / 100);
+      } else {
+        outstandingAmount = Math.round(rawOutstanding * 100) / 100;
+      }
+    } else {
+      // rawOutstanding is 0 or omitted in the sheet.
+      // If billAmount > 0, compute outstanding = max(0, billAmount - adjustment).
+      if (billAmount > 0) {
+        outstandingAmount = Math.max(0, Math.round((billAmount - adjustment) * 100) / 100);
+      } else {
+        outstandingAmount = 0;
+      }
+    }
 
     const { daysOverdue, agingBucket } = computeAging(dueDate, now);
 
@@ -359,7 +464,11 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
       if (existing.outstandingAmount !== outstandingAmount) {
         existing.billAmount = Math.round((existing.billAmount + billAmount) * 100) / 100;
         existing.adjustment = Math.round((existing.adjustment + adjustment) * 100) / 100;
-        existing.outstandingAmount = Math.round((existing.outstandingAmount + outstandingAmount) * 100) / 100;
+        if (existing.adjustment > 0 && (existing.outstandingAmount >= existing.billAmount || existing.outstandingAmount > existing.billAmount - existing.adjustment)) {
+          existing.outstandingAmount = Math.max(0, Math.round((existing.billAmount - existing.adjustment) * 100) / 100);
+        } else {
+          existing.outstandingAmount = Math.round((existing.outstandingAmount + outstandingAmount) * 100) / 100;
+        }
       }
       continue;
     }
@@ -614,16 +723,31 @@ function parseSheetRows(rows: any[][], customerMap: Map<string, ParsedCustomerRe
     }
 
     if (section === 'TRACKER') {
-      const partyName = getCol(row, headerColMap, ['party name', 'partyname', 'ledger name']);
-      const billNo = getCol(row, headerColMap, ['bill no', 'billno', 'invoice no']);
-      const outstanding = parseFloat(getCol(row, headerColMap, ['outstanding amount', 'outstanding', 'balance']) || '0');
-      const billAmount = parseFloat(getCol(row, headerColMap, ['bill amount', 'amount', 'invoice amount']) || '0');
+      const partyName = getCol(row, headerColMap, ['party name', 'partyname', 'ledger name', 'customer name']);
+      const billNo = getCol(row, headerColMap, ['bill no', 'billno', 'invoice no', 'invoice #', 'bill #']);
+      const rawOutstanding = parseNumeric(getCol(row, headerColMap, ['outstanding amount', 'outstanding', 'balance', 'balance amount', 'due amount', 'due amt', 'pending amount', 'net amount']));
+      const rawBillAmt = parseNumeric(getCol(row, headerColMap, ['bill amount', 'amount', 'invoice amount', 'bill amt', 'gross amount', 'total amount', 'total']));
+      const rawAdj = parseNumeric(getCol(row, headerColMap, ['adjustment', 'paid', 'paid amount', 'paid/adjusted', 'paid / adjusted', 'payment', 'adjusted', 'received', 'advance', 'paid amt', 'adj amt']));
       const actionType = getCol(row, headerColMap, ['action type', 'action']) || 'Follow-up Required';
 
       // Strictly exclude negative amounts (e.g. -123 or -49899)
-      if (outstanding < 0 || billAmount < 0) continue;
+      if (rawOutstanding < 0 || rawBillAmt < 0) continue;
 
       if (!partyName || !billNo || partyName.toLowerCase() === 'grand total') continue;
+
+      const billAmount = Math.round(Math.abs(rawBillAmt) * 100) / 100;
+      const adjustment = Math.round(Math.abs(rawAdj) * 100) / 100;
+
+      let effectiveOutstanding = 0;
+      if (rawOutstanding > 0) {
+        if (adjustment > 0 && (rawOutstanding >= billAmount || rawOutstanding > Math.round((billAmount - adjustment) * 100) / 100)) {
+          effectiveOutstanding = Math.max(0, Math.round((billAmount - adjustment) * 100) / 100);
+        } else {
+          effectiveOutstanding = Math.round(rawOutstanding * 100) / 100;
+        }
+      } else if (billAmount > 0) {
+        effectiveOutstanding = Math.max(0, Math.round((billAmount - adjustment) * 100) / 100);
+      }
 
       const normName = normalizeName(partyName);
       let customer = customerMap.get(normName);
@@ -665,15 +789,15 @@ function parseSheetRows(rows: any[][], customerMap: Map<string, ParsedCustomerRe
       const dueDate = parseDate(getCol(row, headerColMap, ['due date', 'duedate']));
       const daysOverdue = parseInt(getCol(row, headerColMap, ['days overdue']) || '0', 10);
       const agingBucket = getCol(row, headerColMap, ['aging bucket']) || (daysOverdue <= 0 ? 'Not Yet Due' : `${daysOverdue} Days`);
-      const status = getCol(row, headerColMap, ['status']) || (outstanding <= 0 ? 'Payment Received' : 'Pending');
+      const status = getCol(row, headerColMap, ['status']) || (effectiveOutstanding <= 0 ? 'Payment Received' : adjustment > 0 ? 'Partially Paid' : 'Pending');
 
       customer.invoices.push({
         billNo,
         billDate,
         dueDate,
         billAmount,
-        adjustment: parseFloat(getCol(row, headerColMap, ['adjustment']) || '0'),
-        outstandingAmount: outstanding,
+        adjustment,
+        outstandingAmount: effectiveOutstanding,
         daysOverdue,
         agingBucket,
         actionType,
@@ -683,8 +807,8 @@ function parseSheetRows(rows: any[][], customerMap: Map<string, ParsedCustomerRe
         narration: getCol(row, headerColMap, ['narration']),
       });
 
-      if (customer.isCustomer && actionType !== 'Credit Balance - No Action' && outstanding > 0) {
-        customer.totalOutstanding += outstanding;
+      if (customer.isCustomer && actionType !== 'Credit Balance - No Action' && effectiveOutstanding > 0) {
+        customer.totalOutstanding = Math.round((customer.totalOutstanding + effectiveOutstanding) * 100) / 100;
       }
     } else if (section === 'PARTY_SUMMARY') {
       const partyName = getCol(row, headerColMap, ['party name', 'partyname']);

@@ -45,17 +45,29 @@ export async function reconcileDailySapExport(
 
   // Deduplicate incoming bills in-memory to prevent double entries or unique constraint collisions
   const seenIncoming = new Map<string, ParsedSapBill>();
-  for (const bill of incomingBills) {
+  for (const rawBill of incomingBills) {
+    const bill = { ...rawBill };
+    // Enforce accounting invariant: Outstanding Due = max(0, Bill Amount - Paid / Adjusted)
+    if (bill.adjustment > 0 && (bill.outstandingAmount >= bill.billAmount || bill.outstandingAmount > bill.billAmount - bill.adjustment)) {
+      bill.outstandingAmount = Math.max(0, Math.round((bill.billAmount - bill.adjustment) * 100) / 100);
+    } else if (bill.outstandingAmount === 0 && bill.billAmount > 0 && bill.adjustment === 0) {
+      bill.outstandingAmount = bill.billAmount;
+    }
+
     const k = `${bill.branchCode}_${bill.ledgerCode}_${bill.billNo}`.toUpperCase();
     if (!seenIncoming.has(k)) {
-      seenIncoming.set(k, { ...bill });
+      seenIncoming.set(k, bill);
     } else {
       const existingIncoming = seenIncoming.get(k)!;
       // If duplicate row for same invoice number, aggregate amounts if distinct line item
       if (bill.outstandingAmount !== existingIncoming.outstandingAmount) {
         existingIncoming.billAmount = Math.round((existingIncoming.billAmount + bill.billAmount) * 100) / 100;
         existingIncoming.adjustment = Math.round((existingIncoming.adjustment + bill.adjustment) * 100) / 100;
-        existingIncoming.outstandingAmount = Math.round((existingIncoming.outstandingAmount + bill.outstandingAmount) * 100) / 100;
+        if (existingIncoming.adjustment > 0 && (existingIncoming.outstandingAmount >= existingIncoming.billAmount || existingIncoming.outstandingAmount > existingIncoming.billAmount - existingIncoming.adjustment)) {
+          existingIncoming.outstandingAmount = Math.max(0, Math.round((existingIncoming.billAmount - existingIncoming.adjustment) * 100) / 100);
+        } else {
+          existingIncoming.outstandingAmount = Math.round((existingIncoming.outstandingAmount + bill.outstandingAmount) * 100) / 100;
+        }
       }
     }
   }
@@ -150,6 +162,14 @@ export async function reconcileDailySapExport(
     if (!existing) {
       // A. NEW ENTRY TODAY
       newEntriesCount++;
+      const initialStatus = isExcludedAccount
+        ? 'Closed'
+        : inv.outstandingAmount <= 0
+        ? 'Closed'
+        : inv.adjustment > 0
+        ? 'Partially Paid'
+        : 'Pending';
+
       const createdBill = await prisma.invoice.create({
         data: {
           tenantId,
@@ -166,10 +186,22 @@ export async function reconcileDailySapExport(
           agingBucket: inv.agingBucket,
           actionType: isExcludedAccount ? 'No Action' : inv.actionType,
           priority: isExcludedAccount ? 'Low' : inv.priority,
-          status: isExcludedAccount ? 'Closed' : 'Pending',
+          status: initialStatus,
           narration: inv.narration,
         },
       });
+
+      // If imported with an existing adjustment > 0, auto-record payment record
+      if (inv.adjustment > 0) {
+        await prisma.paymentRecord.create({
+          data: {
+            invoiceId: createdBill.id,
+            amountPaid: inv.adjustment,
+            paymentMode: 'SAP_DIFF_DETECTED',
+            notes: `Initial paid/adjusted amount detected on import (₹${inv.adjustment.toLocaleString('en-IN')})`,
+          },
+        });
+      }
 
       // Update existingMap so duplicate rows in the same batch resolve to this invoice
       existingMap.set(key, createdBill as any);
@@ -180,7 +212,9 @@ export async function reconcileDailySapExport(
         ledgerCode: inv.ledgerCode,
         partyName: inv.partyName,
         currentBalance: inv.outstandingAmount,
-        notes: `New bill imported today for ₹${inv.outstandingAmount.toLocaleString('en-IN')}`,
+        notes: inv.adjustment > 0
+          ? `New bill imported today for ₹${inv.outstandingAmount.toLocaleString('en-IN')} (Gross: ₹${inv.billAmount.toLocaleString('en-IN')}, Paid/Adjusted: ₹${inv.adjustment.toLocaleString('en-IN')})`
+          : `New bill imported today for ₹${inv.outstandingAmount.toLocaleString('en-IN')}`,
       });
     } else {
       // Bill exists in both imports

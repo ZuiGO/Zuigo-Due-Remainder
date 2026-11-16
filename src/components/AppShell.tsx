@@ -61,15 +61,26 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
       setCurrentUser(null);
-      router.push('/login');
-      router.refresh();
+      window.location.href = '/login';
     } catch (err) {
       console.error(err);
+      window.location.href = '/login';
     }
   };
 
   if (isAuthPage) {
     return <>{children}</>;
+  }
+
+  if (loading && !currentUser) {
+    return (
+      <div className="min-h-screen bg-[#F5F8FA] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-semibold text-slate-500">Checking authentication...</span>
+        </div>
+      </div>
+    );
   }
 
   const activeItem = NAV_ITEMS.find((n) => n.href === pathname) || NAV_ITEMS[0];

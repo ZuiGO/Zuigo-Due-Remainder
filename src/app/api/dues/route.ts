@@ -130,8 +130,10 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    let totalReceivables = 0;
-    let totalOverdueAmount = 0;
+    let totalReceivables = 0; // Total Bill Amount across active receivables
+    let totalOutstandingAmount = 0; // Net Outstanding Due across active receivables
+    let totalOverdueAmount = 0; // Net Overdue Amount (past due date)
+    let totalPaidAmount = 0; // Total Paid / Adjusted amount
     let upcomingCount = 0;
     let dueTodayCount = 0;
     let overdueCount = 0;
@@ -169,7 +171,10 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      totalReceivables += inv.outstandingAmount;
+      // Total Receivables shows the Total Bill Amount for all active trade invoices
+      totalReceivables += inv.billAmount;
+      totalOutstandingAmount += inv.outstandingAmount;
+      totalPaidAmount += inv.adjustment;
 
       if (
         inv.status === 'Partially Settled' ||
@@ -193,7 +198,9 @@ export async function GET(req: NextRequest) {
     }
 
     totalReceivables = Math.round(totalReceivables * 100) / 100;
+    totalOutstandingAmount = Math.round(totalOutstandingAmount * 100) / 100;
     totalOverdueAmount = Math.round(totalOverdueAmount * 100) / 100;
+    totalPaidAmount = Math.round(totalPaidAmount * 100) / 100;
 
     // Query Import Batches with Date and Time Stamp
     const selectedBatchId = searchParams.get('batchId');
@@ -276,7 +283,9 @@ export async function GET(req: NextRequest) {
       },
       stats: {
         totalReceivables,
+        totalOutstandingAmount,
         totalOverdueAmount,
+        totalPaidAmount,
         upcomingCount,
         dueTodayCount,
         overdueCount,

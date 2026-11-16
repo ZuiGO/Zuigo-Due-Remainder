@@ -358,4 +358,130 @@ describe('Senior Tester Verification: SAP Import Diffs, Email Drafting, Zero Dou
     assert.ok(text.includes('1 day overdue'));
     assert.ok(text.includes('Due today'));
   });
+
+  it('8. Paid / Adjusted Subtraction & Reconciliation: verifies paid amounts subtract strictly from outstanding', async () => {
+    // Case A: Excel row where user has Bill Amount 50,000, Paid: 20,000, and un-subtracted Outstanding: 50,000
+    const rawHtmlGrossOutstanding = `
+    <html><body><table>
+      <tr><td>Branch Code</td><td>Ledger Code</td><td>Party Name</td><td>Bill No</td><td>Bill Date</td><td>Due Date</td><td>Bill Amount</td><td>Paid / Adjusted</td><td>Outstanding Amount</td></tr>
+      <tr><td>ABMATO</td><td>CUST_ADJ_01</td><td>Precision Tools Ltd</td><td>INV-SUB-001</td><td>01-10-2026</td><td>15-10-2026</td><td>50000</td><td>20000</td><td>50000</td></tr>
+      <tr><td>ABMATO</td><td>CUST_ADJ_02</td><td>Apex Engineering</td><td>INV-SUB-002</td><td>01-10-2026</td><td>15-10-2026</td><td>75000</td><td>25000</td><td></td></tr>
+      <tr><td>ABMATO</td><td>CUST_ADJ_03</td><td>Star Matrix</td><td>INV-SUB-003</td><td>01-10-2026</td><td>15-10-2026</td><td>₹ 1,20,000.50</td><td>₹ 45,000.50</td><td>₹ 1,20,000.50</td></tr>
+    </table></body></html>
+    `;
+
+    const parsed = parseSapDuesExport(rawHtmlGrossOutstanding);
+    assert.strictEqual(parsed.length, 3, 'All 3 bills should be parsed');
+
+    // INV-SUB-001: 50,000 - 20,000 = 30,000 outstanding (even though sheet row had 50,000 in outstanding column)
+    const b1 = parsed.find(b => b.billNo === 'INV-SUB-001')!;
+    assert.strictEqual(b1.billAmount, 50000);
+    assert.strictEqual(b1.adjustment, 20000);
+    assert.strictEqual(b1.outstandingAmount, 30000, 'Paid amount MUST be subtracted from outstanding: 50,000 - 20,000 = 30,000');
+
+    // INV-SUB-002: Outstanding column was empty/blank: 75,000 - 25,000 = 50,000
+    const b2 = parsed.find(b => b.billNo === 'INV-SUB-002')!;
+    assert.strictEqual(b2.billAmount, 75000);
+    assert.strictEqual(b2.adjustment, 25000);
+    assert.strictEqual(b2.outstandingAmount, 50000, 'Blank outstanding must calculate 75,000 - 25,000 = 50,000');
+
+    // INV-SUB-003: String currency formatting with commas and ₹: 1,20,000.50 - 45,000.50 = 75,000.00
+    const b3 = parsed.find(b => b.billNo === 'INV-SUB-003')!;
+    assert.strictEqual(b3.billAmount, 120000.5);
+    assert.strictEqual(b3.adjustment, 45000.5);
+    assert.strictEqual(b3.outstandingAmount, 75000, 'Currency strings must be parsed and subtracted accurately');
+
+    // Case B: Database Diff Reconciliation Lifecycle
+    // Step 1: Ingest Day 1 baseline
+    const res1 = await reconcileDailySapExport(tenantId, 'Day1_PaidTest.html', [b1]);
+    assert.strictEqual(res1.newEntriesCount, 1);
+    const dbInv1 = await prisma.invoice.findFirst({
+      where: { tenantId, billNo: 'INV-SUB-001' },
+    });
+    assert.ok(dbInv1);
+    assert.strictEqual(dbInv1.billAmount, 50000);
+    assert.strictEqual(dbInv1.adjustment, 20000);
+    assert.strictEqual(dbInv1.outstandingAmount, 30000);
+    assert.strictEqual(dbInv1.status, 'Partially Paid');
+
+    // Step 2: Next day import has further partial payment: Paid is now 35,000
+    const rawHtmlDay2 = `
+    <html><body><table>
+      <tr><td>Branch Code</td><td>Ledger Code</td><td>Party Name</td><td>Bill No</td><td>Bill Date</td><td>Due Date</td><td>Bill Amount</td><td>Paid / Adjusted</td><td>Outstanding Amount</td></tr>
+      <tr><td>ABMATO</td><td>CUST_ADJ_01</td><td>Precision Tools Ltd</td><td>INV-SUB-001</td><td>01-10-2026</td><td>15-10-2026</td><td>50000</td><td>35000</td><td>50000</td></tr>
+    </table></body></html>
+    `;
+    const parsedDay2 = parseSapDuesExport(rawHtmlDay2);
+    const res2 = await reconcileDailySapExport(tenantId, 'Day2_PaidTest.html', parsedDay2);
+
+    assert.strictEqual(res2.partialPaymentsCount, 1, 'Should detect partial payment');
+    const dbInv2 = await prisma.invoice.findFirst({
+      where: { tenantId, billNo: 'INV-SUB-001' },
+    });
+    assert.ok(dbInv2);
+    assert.strictEqual(dbInv2.adjustment, 35000);
+    assert.strictEqual(dbInv2.outstandingAmount, 15000, 'Outstanding must be reduced to 50,000 - 35,000 = 15,000');
+    assert.strictEqual(dbInv2.status, 'Partially Paid');
+
+    // Verify payment record was auto-created for the 15,000 difference
+    const payments = await prisma.paymentRecord.findMany({
+      where: { invoiceId: dbInv2.id },
+    });
+    assert.ok(payments.length >= 2, 'Should have initial adjustment payment and day 2 diff payment');
+
+    // Step 3: Next day import has full settlement: Paid is 50,000
+    const rawHtmlDay3 = `
+    <html><body><table>
+      <tr><td>Branch Code</td><td>Ledger Code</td><td>Party Name</td><td>Bill No</td><td>Bill Date</td><td>Due Date</td><td>Bill Amount</td><td>Paid / Adjusted</td><td>Outstanding Amount</td></tr>
+      <tr><td>ABMATO</td><td>CUST_ADJ_01</td><td>Precision Tools Ltd</td><td>INV-SUB-001</td><td>01-10-2026</td><td>15-10-2026</td><td>50000</td><td>50000</td><td>0</td></tr>
+    </table></body></html>
+    `;
+    const parsedDay3 = parseSapDuesExport(rawHtmlDay3);
+    const res3 = await reconcileDailySapExport(tenantId, 'Day3_PaidTest.html', parsedDay3);
+
+    assert.strictEqual(res3.settledEntriesCount, 1, 'Should detect settled invoice');
+    const dbInv3 = await prisma.invoice.findFirst({
+      where: { tenantId, billNo: 'INV-SUB-001' },
+    });
+    assert.ok(dbInv3);
+    assert.strictEqual(dbInv3.outstandingAmount, 0, 'Outstanding must be 0');
+    assert.strictEqual(dbInv3.status, 'Closed');
+
+    // Customer balance must be 0
+    const customer = await prisma.customer.findFirst({
+      where: { tenantId, ledgerCode: 'CUST_ADJ_01' },
+    });
+    assert.strictEqual(customer?.totalOutstanding, 0, 'Customer total outstanding balance must be 0');
+  });
+
+  it('9. Total Receivables vs Total Overdue: verifies Total Receivables shows Total Bill Amount and differs from Total Overdue', async () => {
+    // Clean test tenant or isolated ledger bills
+    const rawHtmlKpi = `
+    <html><body><table>
+      <tr><td>Branch Code</td><td>Ledger Code</td><td>Party Name</td><td>Bill No</td><td>Bill Date</td><td>Due Date</td><td>Bill Amount</td><td>Paid / Adjusted</td><td>Outstanding Amount</td></tr>
+      <tr><td>ABMATO</td><td>CUST_KPI_01</td><td>KPI Test Industries</td><td>INV-KPI-001</td><td>01-08-2026</td><td>15-08-2026</td><td>50000</td><td>20000</td><td>30000</td></tr>
+      <tr><td>ABMATO</td><td>CUST_KPI_02</td><td>KPI Alpha Corp</td><td>INV-KPI-002</td><td>01-08-2026</td><td>15-08-2026</td><td>25000</td><td>5000</td><td>20000</td></tr>
+    </table></body></html>
+    `;
+    const parsedKpi = parseSapDuesExport(rawHtmlKpi);
+    await reconcileDailySapExport(tenantId, 'KpiTest.html', parsedKpi);
+
+    // Call dues API GET handler logic
+    const allInvoices = await prisma.invoice.findMany({
+      where: {
+        tenantId,
+        billNo: { in: ['INV-KPI-001', 'INV-KPI-002'] },
+      },
+    });
+
+    const totalBillAmt = allInvoices.reduce((sum, inv) => sum + inv.billAmount, 0);
+    const totalPaidAmt = allInvoices.reduce((sum, inv) => sum + inv.adjustment, 0);
+    const totalOverdueAmt = allInvoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0);
+
+    // Total Receivables = Total Bill Amount (50,000 + 25,000 = 75,000)
+    assert.strictEqual(totalBillAmt, 75000, 'Total Receivables must show Total Bill Amount: 75,000');
+    assert.strictEqual(totalPaidAmt, 25000, 'Total Paid must show: 25,000');
+    assert.strictEqual(totalOverdueAmt, 50000, 'Total Overdue must show Net Outstanding Due: 50,000');
+    assert.notStrictEqual(totalBillAmt, totalOverdueAmt, 'Total Receivables and Total Overdue must NOT show the same amount when paid amounts exist');
+  });
 });

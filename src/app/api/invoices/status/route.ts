@@ -45,18 +45,36 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Please provide a valid settled amount greater than 0' }, { status: 400 });
       }
 
-      newAdjustment = Math.min(invoice.billAmount, settledAmount);
-      newOutstanding = Math.max(0, invoice.billAmount - newAdjustment);
-      effectiveStatus = newOutstanding === 0 ? 'Settled' : 'Partially Settled';
+      let paymentDelta = 0;
+      if (settledAmount >= invoice.billAmount) {
+        newAdjustment = invoice.billAmount;
+        newOutstanding = 0;
+        paymentDelta = invoice.outstandingAmount;
+        effectiveStatus = 'Settled';
+      } else if (settledAmount <= invoice.outstandingAmount) {
+        // Payment amount entered
+        paymentDelta = Math.round(settledAmount * 100) / 100;
+        newOutstanding = Math.max(0, Math.round((invoice.outstandingAmount - paymentDelta) * 100) / 100);
+        newAdjustment = Math.round((invoice.billAmount - newOutstanding) * 100) / 100;
+        effectiveStatus = newOutstanding === 0 ? 'Settled' : 'Partially Settled';
+      } else {
+        // Cumulative adjustment entered
+        newAdjustment = Math.round(Math.min(invoice.billAmount, settledAmount) * 100) / 100;
+        newOutstanding = Math.max(0, Math.round((invoice.billAmount - newAdjustment) * 100) / 100);
+        paymentDelta = Math.max(0, Math.round((invoice.outstandingAmount - newOutstanding) * 100) / 100);
+        effectiveStatus = newOutstanding === 0 ? 'Settled' : 'Partially Settled';
+      }
 
-      await prisma.paymentRecord.create({
-        data: {
-          invoiceId: invoice.id,
-          amountPaid: newAdjustment,
-          paymentMode: 'MANUAL_UPDATE',
-          notes: notes || `Partially settled ₹${newAdjustment.toLocaleString('en-IN')}`,
-        },
-      });
+      if (paymentDelta > 0) {
+        await prisma.paymentRecord.create({
+          data: {
+            invoiceId: invoice.id,
+            amountPaid: paymentDelta,
+            paymentMode: 'MANUAL_UPDATE',
+            notes: notes || `Partially settled ₹${paymentDelta.toLocaleString('en-IN')}. Remaining: ₹${newOutstanding.toLocaleString('en-IN')}`,
+          },
+        });
+      }
     } else if (status === 'Pending') {
       effectiveStatus = 'Pending';
       newAdjustment = 0;

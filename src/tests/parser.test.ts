@@ -7,6 +7,8 @@ import {
   parseDate,
   parseExcelCSVText,
   parseSapDuesExport,
+  parseNumeric,
+  getRowVal,
 } from '../lib/parser.js';
 import * as XLSX from 'xlsx';
 
@@ -90,5 +92,39 @@ describe('Regression: bill settled against an advance stays a live receivable', 
     const mik = parsed.find(b => b.billNo.endsWith('0029'))!;
     assert.strictEqual(mik.outstandingAmount, 109);
     assert.strictEqual(mik.adjustment, 1655);
+  });
+
+  it('should parse strings with commas, currency symbols, and negatives accurately using parseNumeric', () => {
+    assert.strictEqual(parseNumeric('24,802.50'), 24802.5);
+    assert.strictEqual(parseNumeric('₹ 1,00,000'), 100000);
+    assert.strictEqual(parseNumeric('-5,000'), -5000);
+    assert.strictEqual(parseNumeric('(1,500)'), -1500);
+    assert.strictEqual(parseNumeric(''), 0);
+    assert.strictEqual(parseNumeric(null), 0);
+    assert.strictEqual(parseNumeric(undefined), 0);
+    assert.strictEqual(parseNumeric(50000), 50000);
+  });
+
+  it('should find normalized row values regardless of casing, spacing, and punctuation using getRowVal', () => {
+    const row = {
+      '  Paid / Adjusted  ': 15000,
+      'Bill_Amount': 60000,
+    };
+    assert.strictEqual(getRowVal(row, ['paid', 'Paid/Adjusted', 'Paid / Adjusted']), 15000);
+    assert.strictEqual(getRowVal(row, ['Bill Amount', 'bill_amount']), 60000);
+  });
+
+  it('should subtract paid/adjusted amount from outstanding when gross amount was entered in outstanding column', () => {
+    const rows = [
+      ['Ledger Code', 'Party Name', 'Branch Code', 'Bill No', 'Bill Date', 'Due Date', 'Bill Amount', 'Paid / Adjusted', 'Outstanding Amount'],
+      ['101', 'Test Customer', 'ABMATO', 'INV-001', '01-10-2026', '15-10-2026', 100000, 30000, 100000],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Dues');
+    const parsed = parseSapDuesExport(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+    assert.strictEqual(parsed.length, 1);
+    assert.strictEqual(parsed[0].billAmount, 100000);
+    assert.strictEqual(parsed[0].adjustment, 30000);
+    assert.strictEqual(parsed[0].outstandingAmount, 70000, 'Outstanding must be strictly 100,000 - 30,000 = 70,000');
   });
 });

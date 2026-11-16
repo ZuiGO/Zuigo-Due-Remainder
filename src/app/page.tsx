@@ -590,7 +590,7 @@ export default function DashboardPage() {
           {
             label: 'Total Receivables',
             value: `₹${stats ? stats.totalReceivables.toLocaleString('en-IN') : '0'}`,
-            note: 'Active Dr balance across trade customers',
+            note: 'Total bill amount across open trade receivables',
             foot: 'open invoices',
             percent: pct(openCount, totalCount),
             icon: <TrendingUp className="w-4 h-4" />,
@@ -599,8 +599,8 @@ export default function DashboardPage() {
           {
             label: 'Total Overdue',
             value: `₹${stats ? stats.totalOverdueAmount.toLocaleString('en-IN') : '0'}`,
-            note: `${stats ? stats.overdueCount : 0} invoice(s) past due date`,
-            foot: 'of receivables overdue',
+            note: `${stats ? stats.overdueCount : 0} invoice(s) past due date (Net Due)`,
+            foot: 'of total billed overdue',
             percent: pct(stats?.totalOverdueAmount || 0, stats?.totalReceivables || 0),
             icon: <AlertCircle className="w-4 h-4" />,
             chip: 'kpi-chip-red',

@@ -525,6 +525,27 @@ export default function DuesPage() {
         </div>
       )}
 
+      {/* Financial Overview Cards */}
+      {stats && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Bill Amount (Receivables)</div>
+            <div className="text-lg font-black text-slate-800 mt-1">₹{stats.totalReceivables ? stats.totalReceivables.toLocaleString('en-IN') : '0'}</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Gross billed across active trade invoices</div>
+          </div>
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Paid / Adjusted</div>
+            <div className="text-lg font-black text-emerald-600 mt-1">₹{stats.totalPaidAmount ? stats.totalPaidAmount.toLocaleString('en-IN') : '0'}</div>
+            <div className="text-[11px] text-emerald-600/80 mt-0.5">Total collected / advance settled</div>
+          </div>
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Outstanding Overdue</div>
+            <div className="text-lg font-black text-rose-600 mt-1">₹{stats.totalOverdueAmount ? stats.totalOverdueAmount.toLocaleString('en-IN') : '0'}</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">{stats.overdueCount || 0} overdue invoice(s) pending recovery</div>
+          </div>
+        </div>
+      )}
+
       {/* Filter Tabs and Search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto shadow-sm">

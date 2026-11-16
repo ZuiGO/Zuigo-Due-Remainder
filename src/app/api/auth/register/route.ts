@@ -51,10 +51,12 @@ export async function POST(req: NextRequest) {
       message: 'Account registered successfully',
     });
 
-    // Set HTTP-only cookie
+    // Set HTTP-only cookie (Only set Secure if protocol is HTTPS)
+    const isHttps = req.headers.get('x-forwarded-proto') === 'https' || req.url.startsWith('https:');
+
     response.cookies.set('zuigo_session', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isHttps,
       sameSite: 'lax',
       path: '/',
       maxAge: 7 * 24 * 60 * 60, // 7 days

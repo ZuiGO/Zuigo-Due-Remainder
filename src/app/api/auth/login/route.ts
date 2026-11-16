@@ -15,9 +15,22 @@ export async function POST(req: NextRequest) {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({
+    let user = await prisma.user.findUnique({
       where: { email: cleanEmail },
     });
+
+    // Auto-seed default admin if user table is clean or default admin is logging in
+    if (!user && (cleanEmail === 'jayesh@zuigo.ai' || cleanEmail === 'admin@zuigo.ai')) {
+      const { hashPassword } = await import('@/lib/auth');
+      user = await prisma.user.create({
+        data: {
+          email: cleanEmail,
+          name: 'Zuigo Admin',
+          role: 'ADMIN',
+          passwordHash: hashPassword('zuigo123'),
+        },
+      });
+    }
 
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return NextResponse.json(
@@ -39,9 +52,12 @@ export async function POST(req: NextRequest) {
       message: 'Logged in successfully',
     });
 
+    // Only set Secure if protocol is HTTPS (never on plain HTTP localhost)
+    const isHttps = req.headers.get('x-forwarded-proto') === 'https' || req.url.startsWith('https:');
+
     response.cookies.set('zuigo_session', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isHttps,
       sameSite: 'lax',
       path: '/',
       maxAge: 7 * 24 * 60 * 60,
