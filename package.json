@@ -5,7 +5,7 @@
   "description": "Automated and manual receivables recovery platform with multi-channel reminders and installment tracking",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 next build",
     "start": "next start",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
@@ -14,7 +14,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@next/swc-win32-x64-msvc": "^16.4.3",
     "@prisma/client": "^5.21.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.453.0",

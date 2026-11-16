@@ -39,7 +39,16 @@ export function formatBillsList(bills: DigestItem[]): string {
         month: 'short',
         year: 'numeric',
       });
-      const overdueText = b.daysOverdue > 0 ? `${b.daysOverdue} days overdue` : 'Due soon';
+      let overdueText = 'Due soon';
+      if (b.daysOverdue > 1) {
+        overdueText = `${b.daysOverdue} days overdue`;
+      } else if (b.daysOverdue === 1) {
+        overdueText = '1 day overdue';
+      } else if (b.daysOverdue === 0) {
+        overdueText = 'Due today';
+      } else {
+        overdueText = 'Due soon';
+      }
       return `• Bill ${b.billNo}: ₹${b.outstandingAmount.toLocaleString('en-IN')} (Due: ${formattedDate}, ${overdueText})`;
     })
     .join('\n');
@@ -152,10 +161,13 @@ export async function executeTenantDigestRun(
             actionType: 'Follow-up Required',
             outstandingAmount: { gt: 0 },
             status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] },
-            ...(force
-              ? {}
-              : { OR: [{ nextFollowUpDate: null }, { nextFollowUpDate: { lte: now } }] }),
           },
+          include: {
+            commitments: {
+              where: { status: 'ACTIVE' },
+            },
+          },
+          orderBy: { dueDate: 'asc' },
         },
       },
     });
@@ -165,14 +177,29 @@ export async function executeTenantDigestRun(
     let messagesFailed = 0;
 
     for (const customer of customers) {
-      if (customer.invoices.length === 0) continue;
+      // 1. Separate regular bills from bills paused under an active Promise-to-Pay (PTP) commitment
+      const eligibleBills = customer.invoices.filter(i => {
+        const hasActivePtp = (i.status === 'Promise to Pay') || (i.commitments && i.commitments.some(c => new Date(c.promisedDate) > now));
+        return !hasActivePtp;
+      });
+
+      if (eligibleBills.length === 0) continue;
+
+      // 2. Check if customer is due for reminder today:
+      // If approvedCustomerIds or force is true, proceed.
+      // Otherwise, at least ONE bill must have reached its follow-up date (nextFollowUpDate == null || <= now).
+      const isDueToday = force ||
+        Boolean(approvedCustomerIds && approvedCustomerIds.length > 0) ||
+        eligibleBills.some(i => i.nextFollowUpDate == null || new Date(i.nextFollowUpDate) <= now);
+
+      if (!isDueToday) continue; // Cadence hold: customer is not due for reminder today
 
       const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
       const contactPerson = primaryContact?.personName || 'Sir / Madam';
       const customerName = customer.partyName || customer.rawLedgerName;
       const language = customer.preferredLanguage || 'English';
 
-      const digestItems: DigestItem[] = customer.invoices.map(i => ({
+      const digestItems: DigestItem[] = eligibleBills.map(i => ({
         billNo: i.billNo,
         billAmount: i.billAmount,
         outstandingAmount: i.outstandingAmount,
@@ -181,7 +208,7 @@ export async function executeTenantDigestRun(
         priority: i.priority,
       }));
 
-      const totalDue = digestItems.reduce((sum, i) => sum + i.outstandingAmount, 0);
+      const totalDue = Math.round(digestItems.reduce((sum, i) => sum + i.outstandingAmount, 0) * 100) / 100;
 
       // Determine active channels
       // Customers with a registered contact use every channel that contact allows; customers with no
@@ -197,7 +224,7 @@ export async function executeTenantDigestRun(
         if (channel === 'EMAIL' && primaryContact?.emailInvalid) continue;
 
         const recipient =
-          channel === 'EMAIL' ? primaryContact?.emailId : primaryContact?.mobileNumber;
+          (channel === 'EMAIL' ? primaryContact?.emailId : primaryContact?.mobileNumber) || undefined;
         // A contact that exists but has no number/email for this channel is skipped; a customer with no
         // contact at all still sends (recipient undefined -> safe test routing), same as the manual Remind button.
         if (primaryContact && !recipient) continue;
@@ -268,7 +295,7 @@ export async function executeTenantDigestRun(
 
         // Junction records (replace any from an earlier run of the same day)
         await prisma.reminderLogBills.deleteMany({ where: { reminderLogId: log.id } });
-        for (const inv of customer.invoices) {
+        for (const inv of eligibleBills) {
           await prisma.reminderLogBills.create({
             data: { reminderLogId: log.id, invoiceId: inv.id },
           });
@@ -282,13 +309,13 @@ export async function executeTenantDigestRun(
       }
 
       // Update bill followup dates based on highest priority
-      const hasHigh = customer.invoices.some(i => i.priority === 'High');
-      const hasMedium = customer.invoices.some(i => i.priority === 'Medium');
+      const hasHigh = eligibleBills.some(i => i.priority === 'High');
+      const hasMedium = eligibleBills.some(i => i.priority === 'Medium');
       const cadenceDays = hasHigh ? 3 : hasMedium ? 7 : 14;
 
       const nextFollowup = new Date(now.getTime() + cadenceDays * 86400000);
 
-      for (const inv of customer.invoices) {
+      for (const inv of eligibleBills) {
         await prisma.invoice.update({
           where: { id: inv.id },
           data: {
@@ -403,12 +430,13 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
           actionType: 'Follow-up Required',
           outstandingAmount: { gt: 0 },
           status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] },
-          OR: [
-            { nextFollowUpDate: null },
-            { nextFollowUpDate: { lte: now } },
-          ],
         },
-        orderBy: { daysOverdue: 'desc' },
+        include: {
+          commitments: {
+            where: { status: 'ACTIVE' },
+          },
+        },
+        orderBy: { dueDate: 'asc' },
       },
       reminderLogs: {
         where: { sentDate: todayDate },
@@ -420,14 +448,24 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
   const queue: QueuedDigestCustomer[] = [];
 
   for (const customer of customers) {
-    if (customer.invoices.length === 0) continue;
+    // Exclude bills paused under an active Promise-to-Pay (PTP) commitment
+    const eligibleBills = customer.invoices.filter(i => {
+      const hasActivePtp = (i.status === 'Promise to Pay') || (i.commitments && i.commitments.some(c => new Date(c.promisedDate) > now));
+      return !hasActivePtp;
+    });
+
+    if (eligibleBills.length === 0) continue;
+
+    // Must have at least one bill due today (null nextFollowUpDate or reached cadence)
+    const isDueToday = eligibleBills.some(i => i.nextFollowUpDate == null || new Date(i.nextFollowUpDate) <= now);
+    if (!isDueToday) continue;
 
     const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
     const contactPerson = primaryContact?.personName || 'Sir / Madam';
     const customerName = customer.partyName || customer.rawLedgerName;
     const language = customer.preferredLanguage || 'English';
 
-    const digestItems: DigestItem[] = customer.invoices.map(i => ({
+    const digestItems: DigestItem[] = eligibleBills.map(i => ({
       billNo: i.billNo,
       billAmount: i.billAmount,
       outstandingAmount: i.outstandingAmount,
@@ -436,7 +474,7 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
       priority: i.priority,
     }));
 
-    const totalDue = digestItems.reduce((sum, i) => sum + i.outstandingAmount, 0);
+    const totalDue = Math.round(digestItems.reduce((sum, i) => sum + i.outstandingAmount, 0) * 100) / 100;
 
     const { subject, body } = compileDigestMessage({
       customerId: customer.id,

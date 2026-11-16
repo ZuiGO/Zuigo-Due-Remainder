@@ -192,6 +192,9 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    totalReceivables = Math.round(totalReceivables * 100) / 100;
+    totalOverdueAmount = Math.round(totalOverdueAmount * 100) / 100;
+
     // Query Import Batches with Date and Time Stamp
     const selectedBatchId = searchParams.get('batchId');
 

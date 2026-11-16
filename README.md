@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Zuigo Payment Follow-up Automation Platform
 
 > **Enterprise-Grade, Multi-Tenant B2B Accounts Receivable Recovery Engine**  
@@ -213,7 +212,3 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 - **Organization:** ZuiGO Private Limited
 - **License:** Proprietary & Confidential — All rights reserved.
-=======
-# Zuigo-Due-Reminder
-Reminder msgs
->>>>>>> origin/main

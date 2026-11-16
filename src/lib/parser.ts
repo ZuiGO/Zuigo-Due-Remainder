@@ -349,6 +349,21 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
       }
     }
 
+    // Deduplication check: prevent double entries if an export workbook has duplicate rows
+    const billKey = `${branchCode}_${rawLedger}_${billNo}`.toUpperCase();
+    const existingIndex = parsedBills.findIndex(
+      b => `${b.branchCode}_${b.ledgerCode}_${b.billNo}`.toUpperCase() === billKey
+    );
+    if (existingIndex >= 0) {
+      const existing = parsedBills[existingIndex];
+      if (existing.outstandingAmount !== outstandingAmount) {
+        existing.billAmount = Math.round((existing.billAmount + billAmount) * 100) / 100;
+        existing.adjustment = Math.round((existing.adjustment + adjustment) * 100) / 100;
+        existing.outstandingAmount = Math.round((existing.outstandingAmount + outstandingAmount) * 100) / 100;
+      }
+      continue;
+    }
+
     parsedBills.push({
       ledgerCode: rawLedger,
       partyName: rawParty,

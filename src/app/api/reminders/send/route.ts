@@ -6,7 +6,7 @@ import {
   selectBestTemplate 
 } from '@/lib/template-renderer';
 import { generateSmartReminderWithGroq } from '@/lib/groq';
-import { isNonTradeOrExcludedAccount } from '@/lib/parser';
+import { isNonTradeOrExcludedAccount, computeAging } from '@/lib/parser';
 import { 
   dispatchMessage, 
   OVERRIDE_TARGET_PHONE, 
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
         year: 'numeric',
       });
 
-      const daysOverdue = Math.round((Date.now() - new Date(invoice.dueDate).getTime()) / (1000 * 60 * 60 * 24));
+      const { daysOverdue } = computeAging(invoice.dueDate);
 
       // Choose matching template
       const activeTemplate =

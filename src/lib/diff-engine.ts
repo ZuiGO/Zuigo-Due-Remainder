@@ -43,6 +43,24 @@ export async function reconcileDailySapExport(
     existingMap.set(key, b);
   }
 
+  // Deduplicate incoming bills in-memory to prevent double entries or unique constraint collisions
+  const seenIncoming = new Map<string, ParsedSapBill>();
+  for (const bill of incomingBills) {
+    const k = `${bill.branchCode}_${bill.ledgerCode}_${bill.billNo}`.toUpperCase();
+    if (!seenIncoming.has(k)) {
+      seenIncoming.set(k, { ...bill });
+    } else {
+      const existingIncoming = seenIncoming.get(k)!;
+      // If duplicate row for same invoice number, aggregate amounts if distinct line item
+      if (bill.outstandingAmount !== existingIncoming.outstandingAmount) {
+        existingIncoming.billAmount = Math.round((existingIncoming.billAmount + bill.billAmount) * 100) / 100;
+        existingIncoming.adjustment = Math.round((existingIncoming.adjustment + bill.adjustment) * 100) / 100;
+        existingIncoming.outstandingAmount = Math.round((existingIncoming.outstandingAmount + bill.outstandingAmount) * 100) / 100;
+      }
+    }
+  }
+  const cleanIncomingBills = Array.from(seenIncoming.values());
+
   const incomingKeys = new Set<string>();
 
   let newEntriesCount = 0;
@@ -54,7 +72,7 @@ export async function reconcileDailySapExport(
   const diffLogs: DiffReconciliationSummary['diffLogs'] = [];
 
   // 2. Process incoming bills
-  for (const inv of incomingBills) {
+  for (const inv of cleanIncomingBills) {
     if (inv.isExcluded) {
       excludedCount++;
     }
@@ -153,6 +171,9 @@ export async function reconcileDailySapExport(
         },
       });
 
+      // Update existingMap so duplicate rows in the same batch resolve to this invoice
+      existingMap.set(key, createdBill as any);
+
       diffLogs.push({
         diffType: 'NEW_ENTRY',
         billNo: inv.billNo,
@@ -166,10 +187,48 @@ export async function reconcileDailySapExport(
       const oldBal = existing.outstandingAmount;
       const newBal = inv.outstandingAmount;
 
-      if (newBal < oldBal && oldBal > 0) {
-        // B. PARTIAL PAYMENT DETECTED IN SAP
+      if (newBal <= 0 && oldBal > 0) {
+        // B1. FULLY SETTLED TODAY (Zero balance reached in today's export)
+        settledEntriesCount++;
+        const paidDifference = Math.round(oldBal * 100) / 100;
+
+        await prisma.paymentRecord.create({
+          data: {
+            invoiceId: existing.id,
+            amountPaid: paidDifference,
+            paymentMode: 'SAP_DIFF_DETECTED',
+            notes: `Auto-reconciled: balance fully cleared and settled in SAP`,
+          },
+        });
+
+        await prisma.invoice.update({
+          where: { id: existing.id },
+          data: {
+            previousOutstandingAmount: oldBal,
+            outstandingAmount: 0,
+            adjustment: inv.adjustment || Math.round(((existing.adjustment || 0) + paidDifference) * 100) / 100,
+            daysOverdue: inv.daysOverdue,
+            agingBucket: inv.agingBucket,
+            priority: 'Low',
+            actionType: 'No Action',
+            status: 'Closed',
+            manualOverride: false,
+          },
+        });
+
+        diffLogs.push({
+          diffType: 'SETTLED',
+          billNo: inv.billNo,
+          ledgerCode: inv.ledgerCode,
+          partyName: inv.partyName,
+          previousBalance: oldBal,
+          currentBalance: 0,
+          notes: `Bill fully settled in SAP (cleared ₹${paidDifference.toLocaleString('en-IN')}).`,
+        });
+      } else if (newBal < oldBal && oldBal > 0) {
+        // B2. PARTIAL PAYMENT DETECTED IN SAP
         partialPaymentsCount++;
-        const paidDifference = oldBal - newBal;
+        const paidDifference = Math.round((oldBal - newBal) * 100) / 100;
 
         // Auto-create payment record
         await prisma.paymentRecord.create({
@@ -177,7 +236,7 @@ export async function reconcileDailySapExport(
             invoiceId: existing.id,
             amountPaid: paidDifference,
             paymentMode: 'SAP_DIFF_DETECTED',
-            notes: `Auto-reconciled: balance reduced from ₹${oldBal} to ₹${newBal} in SAP`,
+            notes: `Auto-reconciled: balance reduced from ₹${oldBal.toLocaleString('en-IN')} to ₹${newBal.toLocaleString('en-IN')} in SAP`,
           },
         });
 
@@ -186,11 +245,11 @@ export async function reconcileDailySapExport(
           data: {
             previousOutstandingAmount: oldBal,
             outstandingAmount: newBal,
-            adjustment: inv.adjustment,
+            adjustment: inv.adjustment || Math.round(((existing.adjustment || 0) + paidDifference) * 100) / 100,
             daysOverdue: inv.daysOverdue,
             agingBucket: inv.agingBucket,
             priority: inv.priority,
-            status: newBal === 0 ? 'Payment Received' : 'Partially Paid',
+            status: 'Partially Paid',
           },
         });
 
@@ -209,7 +268,9 @@ export async function reconcileDailySapExport(
 
         // 7-day Grace Period check for manually marked paid bills
         let billStatus = existing.status;
-        let diffNotes = `Unchanged bill still pending. Aging updated: ${inv.daysOverdue} days overdue.`;
+        let diffNotes = newBal > oldBal
+          ? `Balance increased from ₹${oldBal.toLocaleString('en-IN')} to ₹${newBal.toLocaleString('en-IN')} in SAP.`
+          : `Unchanged bill still pending. Aging updated: ${inv.daysOverdue} days overdue.`;
 
         if (existing.manualOverride && existing.manualMarkedDate) {
           const daysSinceMarked = Math.round((new Date().getTime() - new Date(existing.manualMarkedDate).getTime()) / 86400000);
@@ -264,12 +325,22 @@ export async function reconcileDailySapExport(
     if (!incomingKeys.has(key) && b.status !== 'Closed' && b.outstandingAmount > 0) {
       settledEntriesCount++;
 
+      await prisma.paymentRecord.create({
+        data: {
+          invoiceId: b.id,
+          amountPaid: Math.round(b.outstandingAmount * 100) / 100,
+          paymentMode: 'SAP_DIFF_DETECTED',
+          notes: `Auto-reconciled: bill cleared and marked Closed in SAP`,
+        },
+      });
+
       await prisma.invoice.update({
         where: { id: b.id },
         data: {
           previousOutstandingAmount: b.outstandingAmount,
           outstandingAmount: 0,
           status: 'Closed',
+          actionType: 'No Action',
           manualOverride: false,
         },
       });
@@ -305,9 +376,11 @@ export async function reconcileDailySapExport(
       continue;
     }
 
-    const activeTotal = c.invoices
-      .filter(i => i.status !== 'Closed' && i.status !== 'Payment Received' && i.actionType !== 'No Action')
-      .reduce((sum, i) => sum + i.outstandingAmount, 0);
+    const activeTotal = Math.round(
+      c.invoices
+        .filter(i => i.status !== 'Closed' && i.status !== 'Payment Received' && i.actionType !== 'No Action')
+        .reduce((sum, i) => sum + i.outstandingAmount, 0) * 100
+    ) / 100;
 
     await prisma.customer.update({
       where: { id: c.id },
