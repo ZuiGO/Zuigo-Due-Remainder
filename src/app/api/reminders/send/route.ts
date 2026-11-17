@@ -53,11 +53,24 @@ export async function POST(req: NextRequest) {
 
       if (
         customer.status === 'EXCLUDED' ||
+        customer.status === 'INTERNAL_MUTED' ||
         invoice.actionType === 'No Action' ||
+        invoice.status === 'Internal / Muted' ||
         isNonTradeOrExcludedAccount(customer.rawLedgerName || customer.partyName || '')
       ) {
         return NextResponse.json(
           { error: `Cannot send payment reminder to ${customer.partyName || customer.rawLedgerName}: Internal utility/tax accounts (Electricity Bill, TDS, etc.) are strictly excluded from payment reminders.` },
+          { status: 400 }
+        );
+      }
+
+      if (
+        invoice.outstandingAmount <= 0 ||
+        invoice.billAmount <= 0 ||
+        invoice.status === 'Credit Note'
+      ) {
+        return NextResponse.json(
+          { error: `Cannot send payment reminder for Bill ${invoice.billNo}: Credit Notes and negative balances (₹${invoice.outstandingAmount.toLocaleString('en-IN')}) are credit adjustments/returns, not outstanding dues.` },
           { status: 400 }
         );
       }

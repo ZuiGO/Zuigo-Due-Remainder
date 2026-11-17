@@ -109,9 +109,21 @@ export default function DashboardPage() {
         setLatestBatch(data.latestBatch);
         setRecentBatches(data.recentBatches || []);
         setAllInvoices(data.invoices || []);
-        const critical = (data.invoices || []).filter(
-          (d: any) => d.customer.isFlagged || d.daysOverdue > 0 || d.agingBucket !== 'Not Yet Due'
-        );
+        const critical = (data.invoices || []).filter((d: any) => {
+          const isInternal =
+            d.customer?.status === 'INTERNAL_MUTED' ||
+            d.customer?.status === 'EXCLUDED' ||
+            /electricity/i.test(d.customer?.partyName || '') ||
+            /tds/i.test(d.customer?.partyName || '') ||
+            /sales return/i.test(d.customer?.partyName || '') ||
+            /phonepe/i.test(d.narration || '') ||
+            d.status === 'Internal / Muted';
+          const isCreditNote = d.outstandingAmount <= 0 || d.billAmount <= 0 || d.status === 'Credit Note';
+          if (isInternal || isCreditNote || d.actionType === 'No Action' || d.isExcluded) {
+            return false;
+          }
+          return d.customer?.isFlagged || d.daysOverdue > 0 || d.agingBucket !== 'Not Yet Due';
+        });
         setCriticalDues(critical.slice(0, 6));
       }
 
@@ -371,6 +383,22 @@ export default function DashboardPage() {
   };
 
   const handleOpenRemind = (inv: any) => {
+    if (!inv) return;
+    const isInternal =
+      inv.customer?.status === 'INTERNAL_MUTED' ||
+      inv.customer?.status === 'EXCLUDED' ||
+      /electricity/i.test(inv.customer?.partyName || '') ||
+      /tds/i.test(inv.customer?.partyName || '') ||
+      /sales return/i.test(inv.customer?.partyName || '') ||
+      /phonepe/i.test(inv.narration || '') ||
+      inv.status === 'Internal / Muted';
+    const isCreditNote = inv.outstandingAmount <= 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
+
+    if (isInternal || isCreditNote || inv.actionType === 'No Action' || inv.isExcluded) {
+      alert('Messaging disabled: Credit Notes, negative balances, and internal/TDS bills cannot receive payment reminders.');
+      return;
+    }
+
     setSelectedInvoice(inv);
     const initialChannel: 'WHATSAPP' | 'SMS' | 'EMAIL' = 'WHATSAPP';
     const initialLang = inv.customer?.preferredLanguage || 'English';
@@ -411,6 +439,17 @@ export default function DashboardPage() {
 
   const handleSendReminder = async () => {
     if (!selectedInvoice) return;
+    if (
+      selectedInvoice.outstandingAmount <= 0 ||
+      selectedInvoice.billAmount <= 0 ||
+      selectedInvoice.status === 'Credit Note' ||
+      selectedInvoice.actionType === 'No Action' ||
+      selectedInvoice.customer?.status === 'INTERNAL_MUTED' ||
+      selectedInvoice.customer?.status === 'EXCLUDED'
+    ) {
+      alert('Cannot send payment reminder: This invoice is a Credit Note / Internal voucher with no actionable customer receivable.');
+      return;
+    }
     try {
       const res = await fetch('/api/reminders/send', {
         method: 'POST',
@@ -719,6 +758,16 @@ export default function DashboardPage() {
                 criticalDues.map((inv: any) => {
                   const contact = inv.customer.contacts?.[0];
                   const commitment = inv.commitments && inv.commitments.length > 0 ? inv.commitments[0] : null;
+                  const isInternalAccount =
+                    inv.customer?.status === 'INTERNAL_MUTED' ||
+                    inv.customer?.status === 'EXCLUDED' ||
+                    /electricity/i.test(inv.customer?.partyName || '') ||
+                    /tds/i.test(inv.customer?.partyName || '') ||
+                    /sales return/i.test(inv.customer?.partyName || '') ||
+                    /phonepe/i.test(inv.narration || '') ||
+                    inv.status === 'Internal / Muted';
+                  const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
+                  const isExcludedAccount = inv.actionType === 'No Action' || inv.isExcluded || isInternalAccount || isCreditNote;
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
@@ -793,36 +842,60 @@ export default function DashboardPage() {
 
                       {/* Status */}
                       <td className="py-3.5 px-[18px]">
-                        <span className={`status-pill ${
-                          inv.status === 'Payment Received' || inv.status === 'Closed'
-                            ? 'status-paid'
-                            : inv.status === 'Partially Paid'
-                            ? 'status-upcoming'
-                            : inv.daysOverdue > 0
-                            ? 'status-overdue'
-                            : 'status-progress'
-                        }`}>
-                          {inv.status}
-                        </span>
+                        {isInternalAccount ? (
+                          <span className="px-2 py-1 rounded text-[11px] font-bold bg-purple-50 text-purple-800 border border-purple-200 inline-block">
+                            Internal / TDS (Muted)
+                          </span>
+                        ) : isCreditNote ? (
+                          <span className="px-2 py-1 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 inline-block">
+                            Credit Note (Cr)
+                          </span>
+                        ) : (
+                          <span className={`status-pill ${
+                            inv.status === 'Payment Received' || inv.status === 'Closed'
+                              ? 'status-paid'
+                              : inv.status === 'Partially Paid'
+                              ? 'status-upcoming'
+                              : inv.daysOverdue > 0
+                              ? 'status-overdue'
+                              : 'status-progress'
+                          }`}>
+                            {inv.status}
+                          </span>
+                        )}
                       </td>
 
                       {/* Actions */}
                       <td className="py-3.5 px-[18px] text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleQuickMarkPaid(inv.id)}
-                            title="Mark Payment Received"
-                            className="px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 transition"
-                          >
-                            Mark Paid
-                          </button>
-                          <button
-                            onClick={() => handleOpenRemind(inv)}
-                            className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs"
-                          >
-                            <Send className="w-3.5 h-3.5" /> Remind
-                          </button>
-                        </div>
+                        {isInternalAccount ? (
+                          <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2.5 py-1.5 rounded-lg border border-purple-200 inline-block">
+                            Internal / TDS (Muted)
+                          </span>
+                        ) : isCreditNote ? (
+                          <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200 inline-block">
+                            Credit Note (Cr)
+                          </span>
+                        ) : isExcludedAccount ? (
+                          <span className="text-[11px] font-semibold text-slate-400 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
+                            Excluded (No Reminders)
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleQuickMarkPaid(inv.id)}
+                              title="Mark Payment Received"
+                              className="px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 transition"
+                            >
+                              Mark Paid
+                            </button>
+                            <button
+                              onClick={() => handleOpenRemind(inv)}
+                              className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs"
+                            >
+                              <Send className="w-3.5 h-3.5" /> Remind
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

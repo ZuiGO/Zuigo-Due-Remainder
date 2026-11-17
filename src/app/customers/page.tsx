@@ -534,6 +534,15 @@ export default function CustomersPage() {
                   const logs = c.reminderLogs || [];
                   const isAuto = c.reminderMode === 'FULLY_AUTOMATED';
                   const isEnabled = c.reminderEnabled !== false;
+                  const isInternal =
+                    c.status === 'INTERNAL_MUTED' ||
+                    c.status === 'EXCLUDED' ||
+                    /electricity/i.test(c.partyName || '') ||
+                    /tds/i.test(c.partyName || '') ||
+                    /sales return/i.test(c.partyName || '') ||
+                    /phonepe/i.test(c.rawLedgerName || '');
+                  const isCreditBalanceOrZero = (c.totalOutstanding || 0) <= 0;
+                  const isMuted = isInternal || isCreditBalanceOrZero;
 
                   return (
                     <tr key={c.id} className="hover:bg-slate-50/70 transition">
@@ -541,7 +550,16 @@ export default function CustomersPage() {
                       <td className="py-3.5 px-4 font-medium text-slate-900">
                         <div className="font-bold text-slate-900 flex items-center gap-2">
                           <span>{c.partyName || c.rawLedgerName.replace(/\[.*?\]/g, '').trim()}</span>
-                          {!hasValidContact && (
+                          {isInternal ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              Internal / TDS (Muted)
+                            </span>
+                          ) : isCreditBalanceOrZero ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              Credit Balance (Cr)
+                            </span>
+                          ) : null}
+                          {!hasValidContact && !isMuted && (
                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
                               No Contacts
                             </span>
@@ -622,58 +640,66 @@ export default function CustomersPage() {
 
                       {/* 4. Configure Frequency (Manual Input: Days interval & msgs/day) */}
                       <td className="py-3.5 px-4">
-                        <ManualFrequencyInput
-                          initialFreq={currentFreq}
-                          initialMsgsPerDay={currentMsgsPerDay}
-                          onSave={(f, m) => handleUpdateFrequency(c.id, f, m)}
-                        />
+                        {isMuted ? (
+                          <span className="text-[11px] text-slate-400 italic font-semibold">—</span>
+                        ) : (
+                          <ManualFrequencyInput
+                            initialFreq={currentFreq}
+                            initialMsgsPerDay={currentMsgsPerDay}
+                            onSave={(f, m) => handleUpdateFrequency(c.id, f, m)}
+                          />
+                        )}
                       </td>
 
                       {/* 5. Select Channels of Messaging */}
                       <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleChannel(c.id, 'WHATSAPP', currentChannelsStr)}
-                            title="Toggle WhatsApp messaging"
-                            className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
-                              activeChannels.includes('WHATSAPP')
-                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-sm'
-                                : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
-                            }`}
-                          >
-                            <Phone className="w-3 h-3" />
-                            <span>WA</span>
-                          </button>
+                        {isMuted ? (
+                          <span className="text-[11px] text-slate-400 italic font-medium">Muted (No Reminders)</span>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleChannel(c.id, 'WHATSAPP', currentChannelsStr)}
+                              title="Toggle WhatsApp messaging"
+                              className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
+                                activeChannels.includes('WHATSAPP')
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-sm'
+                                  : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              <Phone className="w-3 h-3" />
+                              <span>WA</span>
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => handleToggleChannel(c.id, 'SMS', currentChannelsStr)}
-                            title="Toggle SMS messaging"
-                            className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
-                              activeChannels.includes('SMS')
-                                ? 'bg-indigo-50 text-indigo-800 border-indigo-300 shadow-sm'
-                                : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
-                            }`}
-                          >
-                            <Send className="w-3 h-3" />
-                            <span>SMS</span>
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleChannel(c.id, 'SMS', currentChannelsStr)}
+                              title="Toggle SMS messaging"
+                              className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
+                                activeChannels.includes('SMS')
+                                  ? 'bg-indigo-50 text-indigo-800 border-indigo-300 shadow-sm'
+                                  : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              <Send className="w-3 h-3" />
+                              <span>SMS</span>
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => handleToggleChannel(c.id, 'EMAIL', currentChannelsStr)}
-                            title="Toggle Email messaging"
-                            className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
-                              activeChannels.includes('EMAIL')
-                                ? 'bg-sky-50 text-sky-800 border-sky-300 shadow-sm'
-                                : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
-                            }`}
-                          >
-                            <Mail className="w-3 h-3" />
-                            <span>Mail</span>
-                          </button>
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleChannel(c.id, 'EMAIL', currentChannelsStr)}
+                              title="Toggle Email messaging"
+                              className={`p-1.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 ${
+                                activeChannels.includes('EMAIL')
+                                  ? 'bg-sky-50 text-sky-800 border-sky-300 shadow-sm'
+                                  : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              <Mail className="w-3 h-3" />
+                              <span>Mail</span>
+                            </button>
+                          </div>
+                        )}
                       </td>
 
                       {/* 6. History of Reminders Sent */}
@@ -693,7 +719,9 @@ export default function CustomersPage() {
 
                       {/* 7. Stop / Resume Reminders Option */}
                       <td className="py-3.5 px-4">
-                        {isEnabled ? (
+                        {isMuted ? (
+                          <span className="text-[11px] text-slate-400 italic font-semibold">Muted</span>
+                        ) : isEnabled ? (
                           <button
                             onClick={() => handleToggleReminderEnabled(c.id, true)}
                             title="Stop sending reminders to this customer"
@@ -716,34 +744,38 @@ export default function CustomersPage() {
 
                       {/* 8. Last of row: Automatic vs. Semi-Automatic */}
                       <td className="py-3.5 px-4 text-right">
-                        <div className="inline-flex rounded-xl p-0.5 bg-slate-100 border border-slate-200 shadow-inner">
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateReminderMode(c.id, 'FULLY_AUTOMATED')}
-                            title="Automatic: Dispatches reminders automatically on schedule without manual review"
-                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
-                              isAuto
-                                ? 'bg-emerald-600 text-white shadow-sm'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            <Zap className="w-3 h-3" />
-                            <span>Automatic</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateReminderMode(c.id, 'SEMI_AUTOMATED')}
-                            title="Semi-Automatic: Queues reminders for review before sending"
-                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
-                              !isAuto
-                                ? 'bg-indigo-600 text-white shadow-sm'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            <Sliders className="w-3 h-3" />
-                            <span>Semi-Auto</span>
-                          </button>
-                        </div>
+                        {isMuted ? (
+                          <span className="text-[11px] text-slate-400 italic font-semibold">—</span>
+                        ) : (
+                          <div className="inline-flex rounded-xl p-0.5 bg-slate-100 border border-slate-200 shadow-inner">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateReminderMode(c.id, 'FULLY_AUTOMATED')}
+                              title="Automatic: Dispatches reminders automatically on schedule without manual review"
+                              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
+                                isAuto
+                                  ? 'bg-emerald-600 text-white shadow-sm'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              <Zap className="w-3 h-3" />
+                              <span>Automatic</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateReminderMode(c.id, 'SEMI_AUTOMATED')}
+                              title="Semi-Automatic: Queues reminders for review before sending"
+                              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition flex items-center gap-1 ${
+                                !isAuto
+                                  ? 'bg-indigo-600 text-white shadow-sm'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              <Sliders className="w-3 h-3" />
+                              <span>Semi-Auto</span>
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

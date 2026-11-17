@@ -220,6 +220,22 @@ export default function DuesPage() {
   };
 
   const handleOpenRemind = (inv: any) => {
+    if (!inv) return;
+    const isInternal =
+      inv.customer?.status === 'INTERNAL_MUTED' ||
+      inv.customer?.status === 'EXCLUDED' ||
+      /electricity/i.test(inv.customer?.partyName || '') ||
+      /tds/i.test(inv.customer?.partyName || '') ||
+      /sales return/i.test(inv.customer?.partyName || '') ||
+      /phonepe/i.test(inv.narration || '') ||
+      inv.status === 'Internal / Muted';
+    const isCreditNote = inv.outstandingAmount <= 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
+
+    if (isInternal || isCreditNote || inv.actionType === 'No Action' || inv.isExcluded) {
+      alert('Messaging disabled: Credit Notes, negative balances, and internal/TDS bills cannot receive payment reminders.');
+      return;
+    }
+
     setSelectedInvoice(inv);
     const initialChannel: 'WHATSAPP' | 'SMS' | 'EMAIL' = 'WHATSAPP';
     const initialLang = inv.customer?.preferredLanguage || 'English';
@@ -429,6 +445,17 @@ export default function DuesPage() {
   const submitManualReminder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedInvoice) return;
+    if (
+      selectedInvoice.outstandingAmount <= 0 ||
+      selectedInvoice.billAmount <= 0 ||
+      selectedInvoice.status === 'Credit Note' ||
+      selectedInvoice.actionType === 'No Action' ||
+      selectedInvoice.customer?.status === 'INTERNAL_MUTED' ||
+      selectedInvoice.customer?.status === 'EXCLUDED'
+    ) {
+      alert('Cannot send payment reminder: This invoice is a Credit Note / Internal voucher with no actionable customer receivable.');
+      return;
+    }
     try {
       const res = await fetch('/api/reminders/send', {
         method: 'POST',
@@ -785,7 +812,15 @@ export default function DuesPage() {
 
                       {/* Payment Status Dropdown - Only 3 Options */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        {isAdvance ? (
+                        {isInternalAccount ? (
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-purple-50 text-purple-800 border border-purple-200 inline-block">
+                            Internal / TDS
+                          </span>
+                        ) : isCreditNote ? (
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 inline-block">
+                            Credit Note
+                          </span>
+                        ) : isAdvance ? (
                           <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-50 text-sky-800 border border-sky-200 inline-block">
                             Advance Received (Cr)
                           </span>

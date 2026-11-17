@@ -143,7 +143,7 @@ export async function executeTenantDigestRun(
     const customerFilter: any = {
       tenantId,
       reminderEnabled: true,
-      status: { not: 'EXCLUDED' },
+      status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] },
     };
 
     if (approvedCustomerIds && approvedCustomerIds.length > 0) {
