@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { isNonTradeOrExcludedAccount, computeAging } from '@/lib/parser';
+import { isNonTradeOrExcludedAccount, isInternalOrPaidByCompany, computeAging } from '@/lib/parser';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,9 +23,6 @@ export async function GET(req: NextRequest) {
 
     const whereClause: any = {
       tenantId,
-      customer: {
-        status: { not: 'EXCLUDED' },
-      },
     };
 
     if (search) {
@@ -39,17 +36,34 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    // Exclude internal non-customer accounts (TDS, Electricity Bill, etc.) from standard dues views
-    if (!whereClause.customer) whereClause.customer = {};
-    whereClause.customer.status = { not: 'EXCLUDED' };
-    whereClause.actionType = { not: 'No Action' };
-
-    if (filter === 'FLAGGED') {
-      whereClause.customer = { ...whereClause.customer, isFlagged: true };
+    if (filter === 'INTERNAL' || filter === 'MUTED' || filter === 'TDS') {
+      whereClause.OR = [
+        { customer: { status: { in: ['EXCLUDED', 'INTERNAL_MUTED'] } } },
+        { actionType: 'No Action' },
+      ];
+    } else if (filter === 'CREDIT_NOTES' || filter === 'CREDIT NOTES') {
+      whereClause.OR = [
+        { outstandingAmount: { lt: 0 } },
+        { billAmount: { lt: 0 } },
+        { status: 'Credit Note' },
+      ];
+    } else if (filter === 'ALL_LEDGER' || filter === 'ALL') {
+      // Show entire uploaded ledger matching Excel 1:1
+    } else if (filter === 'CUSTOMER_DUES' || filter === 'TRADE') {
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.actionType = 'Follow-up Required';
+      whereClause.outstandingAmount = { gt: 0 };
+    } else if (filter === 'FLAGGED') {
+      whereClause.customer = { isFlagged: true, status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.actionType = { not: 'No Action' };
     } else if (filter === 'PENDING') {
       whereClause.status = 'Pending';
       whereClause.outstandingAmount = { gt: 0 };
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.actionType = { not: 'No Action' };
     } else if (filter === 'PARTIALLY_SETTLED' || filter === 'PARTIALLY SETTLED') {
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.actionType = { not: 'No Action' };
       whereClause.OR = [
         { status: 'Partially Settled' },
         { status: 'Partially Paid' },
@@ -64,17 +78,23 @@ export async function GET(req: NextRequest) {
         { outstandingAmount: { lte: 0 } },
       ];
     } else if (filter === 'OVERDUE') {
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.actionType = { not: 'No Action' };
       whereClause.dueDate = { lt: todayStart };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
+      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
     } else if (filter === 'DUE_TODAY' || filter === 'DUE TODAY') {
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.actionType = { not: 'No Action' };
       whereClause.dueDate = { gte: todayStart, lte: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
+      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
     } else if (filter === 'UPCOMING') {
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.actionType = { not: 'No Action' };
       whereClause.dueDate = { gt: todayEnd };
       whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] };
+      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
     }
 
     const rawInvoices = await prisma.invoice.findMany({
@@ -119,21 +139,27 @@ export async function GET(req: NextRequest) {
     // daysOverdue / agingBucket stored at import time go stale the next day: always recompute from dueDate.
     const invoices = rawInvoices.map((inv: any) => ({ ...inv, ...computeAging(inv.dueDate, now) }));
 
-    // Compute live aging statistics for dashboard from all active invoices for this tenant
+    // Compute live aging statistics for dashboard from all invoices for this tenant
     const allInvoices = await prisma.invoice.findMany({
       where: {
         tenantId,
-        customer: { status: { not: 'EXCLUDED' } },
       },
       include: {
         customer: true,
       },
     });
 
-    let totalReceivables = 0; // Total Bill Amount across active receivables
-    let totalOutstandingAmount = 0; // Net Outstanding Due across active receivables
-    let totalOverdueAmount = 0; // Net Overdue Amount (past due date)
-    let totalPaidAmount = 0; // Total Paid / Adjusted amount
+    let totalReceivables = 0; // Net Total Bill Amount across full ledger (matches Excel 540,235.83)
+    let totalOutstandingAmount = 0; // Net Total Outstanding across full ledger (matches Excel 493,653.00)
+    let totalPaidAmount = 0; // Total Paid / Adjusted amount across full ledger (matches Excel 46,583.00)
+
+    let tradeReceivables = 0; // Total Gross Bill Amount for actionable trade customer invoices (577,311)
+    let tradeOutstanding = 0; // Net Outstanding Due for trade customer invoices (530,728)
+    let totalOverdueAmount = 0; // Net Overdue Amount for trade customer bills past due date (439,364)
+    let upcomingAmount = 0; // Invoices due in the future (91,364)
+    let internalMutedAmount = 0; // Internal utility/tax vouchers (12,552)
+    let creditNotesAmount = 0; // Negative credit note vouchers (-49,627)
+
     let upcomingCount = 0;
     let dueTodayCount = 0;
     let overdueCount = 0;
@@ -141,15 +167,32 @@ export async function GET(req: NextRequest) {
     let pendingCount = 0;
     let partiallySettledCount = 0;
     let tradeInvoiceCount = 0;
+    let internalCount = 0;
+    let creditNotesCount = 0;
     const flaggedCustomerIds = new Set<string>();
 
     for (const inv of allInvoices) {
-      // Exclude internal/tax/utility bills (TDS, Electricity Bill) from trade stats
-      if (
+      totalReceivables += inv.billAmount;
+      totalPaidAmount += inv.adjustment;
+      totalOutstandingAmount += inv.outstandingAmount;
+
+      const isInternal =
         inv.customer.status === 'EXCLUDED' ||
-        isNonTradeOrExcludedAccount(inv.customer.rawLedgerName || inv.customer.partyName || '') ||
-        inv.actionType === 'No Action'
-      ) {
+        inv.customer.status === 'INTERNAL_MUTED' ||
+        isInternalOrPaidByCompany(inv.customer.rawLedgerName || inv.customer.partyName || '', inv.narration || undefined) ||
+        inv.status === 'Internal / Muted';
+
+      const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
+
+      if (isInternal) {
+        internalCount++;
+        internalMutedAmount += inv.outstandingAmount;
+        continue;
+      }
+
+      if (isCreditNote) {
+        creditNotesCount++;
+        creditNotesAmount += inv.outstandingAmount;
         continue;
       }
 
@@ -171,10 +214,8 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // Total Receivables shows the Total Bill Amount for all active trade invoices
-      totalReceivables += inv.billAmount;
-      totalOutstandingAmount += inv.outstandingAmount;
-      totalPaidAmount += inv.adjustment;
+      tradeReceivables += inv.billAmount;
+      tradeOutstanding += inv.outstandingAmount;
 
       if (
         inv.status === 'Partially Settled' ||
@@ -194,6 +235,7 @@ export async function GET(req: NextRequest) {
         dueTodayCount++;
       } else {
         upcomingCount++;
+        upcomingAmount += inv.outstandingAmount;
       }
     }
 
@@ -201,6 +243,11 @@ export async function GET(req: NextRequest) {
     totalOutstandingAmount = Math.round(totalOutstandingAmount * 100) / 100;
     totalOverdueAmount = Math.round(totalOverdueAmount * 100) / 100;
     totalPaidAmount = Math.round(totalPaidAmount * 100) / 100;
+    tradeReceivables = Math.round(tradeReceivables * 100) / 100;
+    tradeOutstanding = Math.round(tradeOutstanding * 100) / 100;
+    upcomingAmount = Math.round(upcomingAmount * 100) / 100;
+    internalMutedAmount = Math.round(internalMutedAmount * 100) / 100;
+    creditNotesAmount = Math.round(creditNotesAmount * 100) / 100;
 
     // Query Import Batches with Date and Time Stamp
     const selectedBatchId = searchParams.get('batchId');
@@ -286,6 +333,11 @@ export async function GET(req: NextRequest) {
         totalOutstandingAmount,
         totalOverdueAmount,
         totalPaidAmount,
+        tradeReceivables,
+        tradeOutstanding,
+        upcomingAmount,
+        internalMutedAmount,
+        creditNotesAmount,
         upcomingCount,
         dueTodayCount,
         overdueCount,
@@ -293,7 +345,10 @@ export async function GET(req: NextRequest) {
         pendingCount,
         partiallySettledCount,
         settledCount,
-        totalCount: tradeInvoiceCount,
+        internalCount,
+        creditNotesCount,
+        totalCount: allInvoices.length,
+        tradeInvoiceCount,
       },
       latestBatch: activeBatch,
       recentBatches,

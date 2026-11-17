@@ -23,7 +23,7 @@ describe('Excel Workbook & Multi-Invoice Multi-Contact Parser Tests', () => {
     assert.strictEqual(cleanPhone('+91 80871 82898'), '+918087182898');
   });
 
-  it('should strictly exclude rows with negative amounts (e.g. -123 or -49467)', () => {
+  it('should parse negative credit notes (e.g. -49467) and mark them as excluded from reminders', () => {
     const rawData = [
       {
         'Ledger Code': '670212689',
@@ -43,7 +43,11 @@ describe('Excel Workbook & Multi-Invoice Multi-Contact Parser Tests', () => {
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
     const parsed = parseSapDuesExport(buf);
-    assert.strictEqual(parsed.length, 0, 'Negative amounts must be strictly excluded');
+    assert.strictEqual(parsed.length, 1, 'Negative credit note rows must be retained for ledger accuracy');
+    assert.strictEqual(parsed[0].billAmount, -49467);
+    assert.strictEqual(parsed[0].outstandingAmount, -49467);
+    assert.strictEqual(parsed[0].isExcluded, true, 'Credit note must be excluded from reminders');
+    assert.strictEqual(parsed[0].actionType, 'No Action', 'Credit note must have actionType No Action');
   });
 
   it('should parse multi-invoice multi-contact customer data from user format', () => {

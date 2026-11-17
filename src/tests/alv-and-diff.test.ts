@@ -138,7 +138,7 @@ describe('SAP ALV HTML Parser, Contact Master & Daily Diff Engine Tests', () => 
   it('should parse SAP ALV HTML table, skipping letterhead and Grand Total, and flagging exclusions', () => {
     const bills = parseSapDuesExport(Buffer.from(SAMPLE_SAP_ALV_HTML));
 
-    assert.strictEqual(bills.length, 4);
+    assert.strictEqual(bills.length, 5);
 
     // DHOOT AUTO - Valid trade customer
     const dhoot = bills.find(b => b.ledgerCode === '442769153');
@@ -161,9 +161,12 @@ describe('SAP ALV HTML Parser, Contact Master & Daily Diff Engine Tests', () => 
     assert.strictEqual(tds.isExcluded, true);
     assert.strictEqual(tds.actionType, 'No Action');
 
-    // Negative amounts (-125) must be strictly excluded from parsed bills
+    // Negative amounts (-125) must be parsed as excluded credit notes
     const credit = bills.find(b => b.ledgerCode === '698776440');
-    assert.strictEqual(credit, undefined);
+    assert.ok(credit);
+    assert.strictEqual(credit.billAmount, -125);
+    assert.strictEqual(credit.isExcluded, true);
+    assert.strictEqual(credit.actionType, 'No Action');
 
     // Grand Total must NOT be present
     const grandTotal = bills.find(b => /grand\s*total/i.test(b.ledgerCode) || /grand\s*total/i.test(b.partyName));

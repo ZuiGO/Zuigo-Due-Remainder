@@ -527,11 +527,11 @@ export default function DuesPage() {
 
       {/* Financial Overview Cards */}
       {stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
-            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Bill Amount (Receivables)</div>
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Bill Amount (Ledger)</div>
             <div className="text-lg font-black text-slate-800 mt-1">₹{stats.totalReceivables ? stats.totalReceivables.toLocaleString('en-IN') : '0'}</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">Gross billed across active trade invoices</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Net billed across full Excel ledger</div>
           </div>
           <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
             <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Paid / Adjusted</div>
@@ -539,9 +539,14 @@ export default function DuesPage() {
             <div className="text-[11px] text-emerald-600/80 mt-0.5">Total collected / advance settled</div>
           </div>
           <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
-            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Outstanding Overdue</div>
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Outstanding (Ledger)</div>
+            <div className="text-lg font-black text-indigo-700 mt-1">₹{stats.totalOutstandingAmount ? stats.totalOutstandingAmount.toLocaleString('en-IN') : '0'}</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Net balance due across full Excel ledger</div>
+          </div>
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Actionable Overdue</div>
             <div className="text-lg font-black text-rose-600 mt-1">₹{stats.totalOverdueAmount ? stats.totalOverdueAmount.toLocaleString('en-IN') : '0'}</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">{stats.overdueCount || 0} overdue invoice(s) pending recovery</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">{stats.overdueCount || 0} customer bills past due date</div>
           </div>
         </div>
       )}
@@ -550,13 +555,13 @@ export default function DuesPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto shadow-sm">
           {[
-            { id: 'ALL', label: 'All', count: stats?.totalCount },
-            { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
-            { id: 'DUE_TODAY', label: 'Due Today', count: stats?.dueTodayCount },
+            { id: 'ALL', label: 'All Ledger', count: stats?.totalCount },
+            { id: 'CUSTOMER_DUES', label: 'Customer Dues', count: stats?.tradeInvoiceCount },
             { id: 'OVERDUE', label: 'Overdue', count: stats?.overdueCount },
-            { id: 'FLAGGED', label: 'Flagged', count: stats?.flaggedCount },
-            { id: 'PENDING', label: 'Pending', count: stats?.pendingCount },
-            { id: 'PARTIALLY_SETTLED', label: 'Partially Settled', count: stats?.partiallySettledCount },
+            { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
+            { id: 'INTERNAL', label: 'Internal & TDS (Muted)', count: stats?.internalCount },
+            { id: 'CREDIT_NOTES', label: 'Credit Notes', count: stats?.creditNotesCount },
+            { id: 'PARTIALLY_SETTLED', label: 'Partially Paid', count: stats?.partiallySettledCount },
             { id: 'SETTLED', label: 'Settled', count: stats?.settledCount },
           ].map((tab) => (
             <button
@@ -651,7 +656,16 @@ export default function DuesPage() {
                   const logs = inv.customer?.reminderLogs || [];
                   const isAuto = inv.customer?.reminderMode === 'FULLY_AUTOMATED' || !inv.customer?.reminderMode;
                   const isEnabled = inv.customer?.reminderEnabled !== false;
-                  const isExcludedAccount = inv.actionType === 'No Action' || inv.isExcluded || inv.customer?.status === 'EXCLUDED';
+                  const isInternalAccount =
+                    inv.customer?.status === 'INTERNAL_MUTED' ||
+                    inv.customer?.status === 'EXCLUDED' ||
+                    /electricity/i.test(inv.customer?.partyName || '') ||
+                    /tds/i.test(inv.customer?.partyName || '') ||
+                    /sales return/i.test(inv.customer?.partyName || '') ||
+                    /phonepe/i.test(inv.narration || '') ||
+                    inv.status === 'Internal / Muted';
+                  const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
+                  const isExcludedAccount = inv.actionType === 'No Action' || inv.isExcluded || isInternalAccount || isCreditNote;
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
@@ -659,7 +673,17 @@ export default function DuesPage() {
                       <td className="py-3.5 px-4 font-medium text-slate-900 max-w-xs">
                         <div>
                           <span className="font-bold">{inv.customer.partyName || inv.customer.rawLedgerName}</span>
-                          {!isEnabled && (
+                          {isInternalAccount && (
+                            <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              <BellOff className="w-3 h-3 text-purple-600" /> Internal / TDS (Muted)
+                            </span>
+                          )}
+                          {isCreditNote && (
+                            <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              Credit Note / Return
+                            </span>
+                          )}
+                          {!isInternalAccount && !isCreditNote && !isEnabled && (
                             <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
                               <BellOff className="w-3 h-3 text-slate-400" /> Reminders Stopped
                             </span>
@@ -932,13 +956,21 @@ export default function DuesPage() {
 
                       {/* Actions */}
                       <td className="py-3.5 px-4 text-right space-x-1.5 whitespace-nowrap">
-                        {isAdvance ? (
+                        {isInternalAccount ? (
+                          <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2.5 py-1.5 rounded-lg border border-purple-200 inline-block">
+                            Internal / TDS (Muted)
+                          </span>
+                        ) : isCreditNote ? (
+                          <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200 inline-block">
+                            Credit Note (Cr)
+                          </span>
+                        ) : isAdvance ? (
                           <span className="text-xs font-semibold text-slate-500 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
                             Advance on File
                           </span>
                         ) : isExcludedAccount ? (
                           <span className="text-[11px] font-semibold text-slate-400 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
-                            Internal / Tax (No Reminders)
+                            Excluded (No Reminders)
                           </span>
                         ) : (
                           <button

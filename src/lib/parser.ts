@@ -110,6 +110,18 @@ export function isNonTradeOrExcludedAccount(partyName: string): boolean {
   );
 }
 
+export function isInternalOrPaidByCompany(partyName: string, narration?: string): boolean {
+  if (isNonTradeOrExcludedAccount(partyName)) return true;
+  if (!narration) return false;
+  const nLower = narration.toLowerCase();
+  return (
+    /phonepe/i.test(nLower) ||
+    /paid electricity/i.test(nLower) ||
+    /amount return/i.test(nLower) ||
+    /paid by abhiyadna/i.test(nLower)
+  );
+}
+
 export function normalizeName(name: string): string {
   if (!name) return '';
   return name
@@ -395,38 +407,42 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
       ])
     );
 
-    // Strictly exclude rows with negative amounts (e.g. -123 or -49899 etc.)
-    if (rawBillAmt < 0 || rawOutstanding < 0) {
-      continue;
-    }
-
-    // Identify Advance Receipts / Credit Notes by voucher number only (AD... / CN...).
-    // NOTE: the narration is deliberately NOT used. A normal invoice that was settled against an
-    // advance carries narration like "Agst: AMT/..., Adv: AD0010"; it is still a real open bill.
+    const isNegativeEntry = rawBillAmt < 0 || rawOutstanding < 0;
     const isCreditOrAdvance = isAdvanceOrCreditBillNo(billNo);
+    const isInternalAccount = isInternalOrPaidByCompany(rawParty, narration);
 
-    const billAmount = Math.round(Math.abs(rawBillAmt) * 100) / 100;
-    // If it is an advance receipt from a customer, the money was received upfront as an advance deposit
-    const adjustment = isCreditOrAdvance && rawAdjustment === 0
-      ? billAmount
-      : Math.round(Math.abs(rawAdjustment) * 100) / 100;
+    let billAmount = Math.round(rawBillAmt * 100) / 100;
+    let adjustment = Math.round(rawAdjustment * 100) / 100;
+    let outstandingAmount = Math.round(rawOutstanding * 100) / 100;
 
-    // Enforce fundamental accounting identity: Outstanding Due = max(0, Bill Amount - Paid / Adjusted)
-    let outstandingAmount = 0;
-    if (isCreditOrAdvance) {
+    if (isNegativeEntry) {
+      // Negative entries represent credit notes or adjustments
+      billAmount = Math.round(rawBillAmt * 100) / 100;
+      adjustment = Math.round(rawAdjustment * 100) / 100;
+      outstandingAmount = rawOutstanding !== 0
+        ? Math.round(rawOutstanding * 100) / 100
+        : Math.round((rawBillAmt - rawAdjustment) * 100) / 100;
+    } else if (isInternalAccount) {
+      // Internal utility/tax bills paid by Abhiyadna (Electricity, TDS, etc.)
+      // Keep exact ledger figures without artificial advance zeroing
+      billAmount = Math.round(rawBillAmt * 100) / 100;
+      adjustment = Math.round(rawAdjustment * 100) / 100;
+      outstandingAmount = rawOutstanding !== 0
+        ? Math.round(rawOutstanding * 100) / 100
+        : Math.max(0, Math.round((billAmount - adjustment) * 100) / 100);
+    } else if (isCreditOrAdvance) {
+      // Advance receipts from customer
+      billAmount = Math.round(Math.abs(rawBillAmt) * 100) / 100;
+      adjustment = rawAdjustment === 0 ? billAmount : Math.round(Math.abs(rawAdjustment) * 100) / 100;
       outstandingAmount = 0;
     } else if (rawOutstanding > 0) {
-      // If outstanding was provided in sheet:
-      // If adjustment > 0 and the sheet did NOT subtract it (rawOutstanding >= billAmount or rawOutstanding > billAmount - adjustment),
-      // we strictly subtract the paid/adjusted amount.
+      // Standard trade bill
       if (adjustment > 0 && (rawOutstanding >= billAmount || rawOutstanding > Math.round((billAmount - adjustment) * 100) / 100)) {
         outstandingAmount = Math.max(0, Math.round((billAmount - adjustment) * 100) / 100);
       } else {
         outstandingAmount = Math.round(rawOutstanding * 100) / 100;
       }
     } else {
-      // rawOutstanding is 0 or omitted in the sheet.
-      // If billAmount > 0, compute outstanding = max(0, billAmount - adjustment).
       if (billAmount > 0) {
         outstandingAmount = Math.max(0, Math.round((billAmount - adjustment) * 100) / 100);
       } else {
@@ -436,10 +452,11 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
 
     const { daysOverdue, agingBucket } = computeAging(dueDate, now);
 
-    // Exclusion Rules: TDS on Sales, Electricity Bill, Sales Return, or credit/advance vouchers
+    // Exclusion Rules: TDS on Sales, Electricity Bill, Sales Return, credit/advance vouchers, or negative rows
     const isExcluded =
-      isNonTradeOrExcludedAccount(rawParty) ||
+      Boolean(isInternalAccount) ||
       isCreditOrAdvance ||
+      isNegativeEntry ||
       outstandingAmount <= 0;
 
     const actionType = isExcluded ? 'No Action' : 'Follow-up Required';

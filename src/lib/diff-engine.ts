@@ -1,5 +1,10 @@
 import prisma from './db';
-import { type ParsedSapBill, type ParsedContactRecord, isNonTradeOrExcludedAccount } from './parser';
+import { 
+  type ParsedSapBill, 
+  type ParsedContactRecord, 
+  isNonTradeOrExcludedAccount,
+  isInternalOrPaidByCompany,
+} from './parser';
 
 export interface DiffReconciliationSummary {
   batchId: string;
@@ -115,14 +120,14 @@ export async function reconcileDailySapExport(
     }
 
     // Bill-level exclusion (zero balance, advance/credit voucher, non-trade ledger) ...
-    const isExcludedAccount = inv.isExcluded || isNonTradeOrExcludedAccount(inv.partyName);
+    const isExcludedAccount = inv.isExcluded || isInternalOrPaidByCompany(inv.partyName, inv.narration);
     // ... must NOT exclude the whole customer. Only non-trade ledgers (TDS, Electricity...) do.
-    const isExcludedCustomer = isNonTradeOrExcludedAccount(inv.partyName);
+    const isExcludedCustomer = isInternalOrPaidByCompany(inv.partyName, inv.narration);
 
     // Heal customers wrongly marked EXCLUDED by the old import logic (real customer, non-trade name).
     if (!isExcludedCustomer) {
       await prisma.customer.updateMany({
-        where: { tenantId, branchCode: inv.branchCode, ledgerCode: inv.ledgerCode, status: 'EXCLUDED' },
+        where: { tenantId, branchCode: inv.branchCode, ledgerCode: inv.ledgerCode, status: { in: ['EXCLUDED', 'INTERNAL_MUTED'] } },
         data: { status: 'ACTIVE', reminderEnabled: true },
       });
     }
@@ -142,7 +147,7 @@ export async function reconcileDailySapExport(
         branchName: inv.branchName,
         station: inv.station,
         ...(isExcludedCustomer
-          ? { status: 'EXCLUDED', reminderEnabled: false, totalOutstanding: 0 }
+          ? { status: 'INTERNAL_MUTED', reminderEnabled: false, totalOutstanding: 0 }
           : {}),
       },
       create: {
@@ -153,7 +158,7 @@ export async function reconcileDailySapExport(
         partyName: inv.partyName,
         branchName: inv.branchName,
         station: inv.station,
-        status: isExcludedCustomer ? 'EXCLUDED' : 'ACTIVE',
+        status: isExcludedCustomer ? 'INTERNAL_MUTED' : 'ACTIVE',
         reminderEnabled: !isExcludedCustomer,
         totalOutstanding: 0,
       },
@@ -162,9 +167,11 @@ export async function reconcileDailySapExport(
     if (!existing) {
       // A. NEW ENTRY TODAY
       newEntriesCount++;
-      const initialStatus = isExcludedAccount
-        ? 'Closed'
-        : inv.outstandingAmount <= 0
+      const initialStatus = isExcludedCustomer
+        ? 'Internal / Muted'
+        : inv.outstandingAmount < 0
+        ? 'Credit Note'
+        : isExcludedAccount || inv.outstandingAmount === 0
         ? 'Closed'
         : inv.adjustment > 0
         ? 'Partially Paid'
@@ -398,13 +405,13 @@ export async function reconcileDailySapExport(
   });
 
   for (const c of allTenantCustomers) {
-    if (isNonTradeOrExcludedAccount(c.rawLedgerName || c.partyName || '')) {
+    if (isInternalOrPaidByCompany(c.rawLedgerName || c.partyName || '')) {
       await prisma.customer.update({
         where: { id: c.id },
         data: {
           totalOutstanding: 0,
           reminderEnabled: false,
-          status: 'EXCLUDED',
+          status: 'INTERNAL_MUTED',
         },
       });
       continue;

@@ -588,32 +588,32 @@ export default function DashboardPage() {
         const openCount = totalCount - (stats?.settledCount || 0);
         const cards = [
           {
-            label: 'Total Receivables',
+            label: 'Total Bill Amount',
             value: `₹${stats ? stats.totalReceivables.toLocaleString('en-IN') : '0'}`,
-            note: 'Total bill amount across open trade receivables',
+            note: 'Net billed across full Excel ledger',
             foot: 'open invoices',
             percent: pct(openCount, totalCount),
             icon: <TrendingUp className="w-4 h-4" />,
             chip: 'kpi-chip-teal',
           },
           {
-            label: 'Total Overdue',
+            label: 'Total Outstanding',
+            value: `₹${stats ? stats.totalOutstandingAmount.toLocaleString('en-IN') : '0'}`,
+            note: 'Net balance due across full Excel ledger',
+            foot: 'of total billed',
+            percent: pct(stats?.totalOutstandingAmount || 0, stats?.totalReceivables || 0),
+            icon: <CreditCard className="w-4 h-4" />,
+            chip: 'kpi-chip-blue',
+          },
+          {
+            label: 'Actionable Overdue',
             value: `₹${stats ? stats.totalOverdueAmount.toLocaleString('en-IN') : '0'}`,
-            note: `${stats ? stats.overdueCount : 0} invoice(s) past due date (Net Due)`,
-            foot: 'of total billed overdue',
-            percent: pct(stats?.totalOverdueAmount || 0, stats?.totalReceivables || 0),
+            note: `${stats ? stats.overdueCount : 0} customer bills past due date (Eligible for reminders)`,
+            foot: 'of total outstanding overdue',
+            percent: pct(stats?.totalOverdueAmount || 0, stats?.totalOutstandingAmount || 0),
             icon: <AlertCircle className="w-4 h-4" />,
             chip: 'kpi-chip-red',
             valueClass: 'text-[#ce514c]',
-          },
-          {
-            label: 'Defaulters Flagged',
-            value: `${stats ? stats.flaggedCount : 0}`,
-            note: '≥ 5 unanswered notices; follow-up escalated',
-            foot: 'of invoices',
-            percent: pct(stats?.flaggedCount || 0, totalCount),
-            icon: <ShieldAlert className="w-4 h-4" />,
-            chip: 'kpi-chip-yellow',
           },
           {
             label: 'Due Today / Soon',
@@ -622,7 +622,7 @@ export default function DashboardPage() {
             foot: 'of invoices',
             percent: pct((stats?.dueTodayCount || 0) + (stats?.upcomingCount || 0), totalCount),
             icon: <Clock className="w-4 h-4" />,
-            chip: 'kpi-chip-blue',
+            chip: 'kpi-chip-yellow',
           },
         ];
         return (
