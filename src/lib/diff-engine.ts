@@ -36,16 +36,24 @@ export async function reconcileDailySapExport(
   fileName: string,
   incomingBills: ParsedSapBill[]
 ): Promise<DiffReconciliationSummary> {
+  // 0. Safeguard: Never process an empty bill list (which would wipe out existing ledger)
+  if (!incomingBills || incomingBills.length === 0) {
+    throw new Error('No valid receivable bills could be extracted from this file. Database state was preserved.');
+  }
+
   // 1. Fetch all existing active bills for this tenant
   const existingBills = await prisma.invoice.findMany({
     where: { tenantId },
     include: { customer: true },
   });
 
-  const existingMap = new Map<string, typeof existingBills[0]>();
+  const existingByCompositeKey = new Map<string, typeof existingBills[0]>();
+  const existingByBillKey = new Map<string, typeof existingBills[0]>();
   for (const b of existingBills) {
-    const key = `${b.branchCode}_${b.ledgerCode}_${b.billNo}`.toUpperCase();
-    existingMap.set(key, b);
+    const compKey = `${b.branchCode}_${b.ledgerCode}_${b.billNo}`.toUpperCase().trim();
+    const billKey = `${b.branchCode}_${b.billNo}`.toUpperCase().trim();
+    existingByCompositeKey.set(compKey, b);
+    existingByBillKey.set(billKey, b);
   }
 
   // Deduplicate incoming bills in-memory to prevent double entries or unique constraint collisions
@@ -59,7 +67,7 @@ export async function reconcileDailySapExport(
       bill.outstandingAmount = bill.billAmount;
     }
 
-    const k = `${bill.branchCode}_${bill.ledgerCode}_${bill.billNo}`.toUpperCase();
+    const k = `${bill.branchCode}_${bill.billNo}`.toUpperCase().trim();
     if (!seenIncoming.has(k)) {
       seenIncoming.set(k, bill);
     } else {
@@ -78,7 +86,8 @@ export async function reconcileDailySapExport(
   }
   const cleanIncomingBills = Array.from(seenIncoming.values());
 
-  const incomingKeys = new Set<string>();
+  const incomingBillKeys = new Set<string>();
+  const incomingCompositeKeys = new Set<string>();
 
   let newEntriesCount = 0;
   let sameEntriesCount = 0;
@@ -94,30 +103,43 @@ export async function reconcileDailySapExport(
       excludedCount++;
     }
 
-    const key = `${inv.branchCode}_${inv.ledgerCode}_${inv.billNo}`.toUpperCase();
-    incomingKeys.add(key);
+    const billKey = `${inv.branchCode}_${inv.billNo}`.toUpperCase().trim();
+    incomingBillKeys.add(billKey);
 
-    const existing = existingMap.get(key);
+    // Look up existing bill by bill number within branch first (natural business key)
+    const existing = existingByBillKey.get(billKey) || existingByCompositeKey.get(`${inv.branchCode}_${inv.ledgerCode}_${inv.billNo}`.toUpperCase().trim());
 
-    // If customer was previously registered via contact sheet with synthetic PARTY_ code, link to SAP ledger code
-    const pendingByName = await prisma.customer.findFirst({
+    // Match customer by partyName first to avoid creating duplicate customer records when ledger codes vary
+    let existingCustomer = await prisma.customer.findFirst({
       where: {
         tenantId,
         partyName: { equals: inv.partyName, mode: 'insensitive' },
-        ledgerCode: { startsWith: 'PARTY_' },
       },
     });
-    if (pendingByName) {
-      await prisma.customer.update({
-        where: { id: pendingByName.id },
-        data: {
-          ledgerCode: inv.ledgerCode,
-          rawLedgerName: inv.partyName,
-          branchName: inv.branchName,
-          station: inv.station,
-        },
-      });
+
+    if (existingCustomer) {
+      // If customer exists with a real code and current file has a fallback LEDGER_ code, reuse customer's code
+      if (inv.ledgerCode.startsWith('LEDGER_') && !existingCustomer.ledgerCode.startsWith('LEDGER_')) {
+        inv.ledgerCode = existingCustomer.ledgerCode;
+      } else if (!inv.ledgerCode.startsWith('LEDGER_') && (existingCustomer.ledgerCode.startsWith('LEDGER_') || existingCustomer.ledgerCode.startsWith('PARTY_'))) {
+        // Upgrade customer's synthetic code to real ERP code
+        await prisma.customer.update({
+          where: { id: existingCustomer.id },
+          data: {
+            ledgerCode: inv.ledgerCode,
+            branchName: inv.branchName || existingCustomer.branchName,
+            station: inv.station || existingCustomer.station,
+          },
+        });
+        existingCustomer.ledgerCode = inv.ledgerCode;
+      }
+    } else if (existing) {
+      // If invoice existed previously under a customer, reuse that customer's ledgerCode
+      inv.ledgerCode = existing.ledgerCode;
     }
+
+    const compKey = `${inv.branchCode}_${inv.ledgerCode}_${inv.billNo}`.toUpperCase().trim();
+    incomingCompositeKeys.add(compKey);
 
     // Bill-level exclusion (zero balance, advance/credit voucher, non-trade ledger) ...
     const isExcludedAccount = inv.isExcluded || isInternalOrPaidByCompany(inv.partyName, inv.narration);
@@ -210,8 +232,9 @@ export async function reconcileDailySapExport(
         });
       }
 
-      // Update existingMap so duplicate rows in the same batch resolve to this invoice
-      existingMap.set(key, createdBill as any);
+      // Update index so duplicate rows in the same batch resolve to this invoice
+      existingByBillKey.set(billKey, createdBill as any);
+      existingByCompositeKey.set(compKey, createdBill as any);
 
       diffLogs.push({
         diffType: 'NEW_ENTRY',
@@ -324,8 +347,12 @@ export async function reconcileDailySapExport(
           }
         }
 
-        // If balance is positive, ensure status is Pending (clearing any stale Closed/Settled state)
-        if (isExcludedAccount) {
+        // Update status for persistent bills
+        if (isExcludedCustomer) {
+          billStatus = 'Internal / Muted';
+        } else if (newBal < 0 || inv.billAmount < 0) {
+          billStatus = 'Credit Note';
+        } else if (newBal === 0) {
           billStatus = 'Closed';
         } else if (newBal > 0 && (billStatus === 'Closed' || billStatus === 'Payment Received')) {
           billStatus = 'Pending';
@@ -360,10 +387,11 @@ export async function reconcileDailySapExport(
     }
   }
 
-  // 3. Detect SETTLED bills (in DB yesterday, but missing today or zeroed out)
+  // 3. Detect SETTLED bills (in DB previously, but missing today or zeroed out in today's SAP file)
   for (const b of existingBills) {
-    const key = `${b.branchCode}_${b.ledgerCode}_${b.billNo}`.toUpperCase();
-    if (!incomingKeys.has(key) && b.status !== 'Closed' && b.outstandingAmount > 0) {
+    const billKey = `${b.branchCode}_${b.billNo}`.toUpperCase().trim();
+    const compKey = `${b.branchCode}_${b.ledgerCode}_${b.billNo}`.toUpperCase().trim();
+    if (!incomingBillKeys.has(billKey) && !incomingCompositeKeys.has(compKey) && b.status !== 'Closed') {
       settledEntriesCount++;
 
       await prisma.paymentRecord.create({
@@ -371,7 +399,9 @@ export async function reconcileDailySapExport(
           invoiceId: b.id,
           amountPaid: Math.round(b.outstandingAmount * 100) / 100,
           paymentMode: 'SAP_DIFF_DETECTED',
-          notes: `Auto-reconciled: bill cleared and marked Closed in SAP`,
+          notes: b.outstandingAmount < 0
+            ? `Credit note / return cleared and settled in SAP`
+            : `Auto-reconciled: bill cleared and marked Closed in SAP`,
         },
       });
 
@@ -393,7 +423,9 @@ export async function reconcileDailySapExport(
         partyName: b.customer.partyName || b.customer.rawLedgerName,
         previousBalance: b.outstandingAmount,
         currentBalance: 0,
-        notes: `Bill cleared and marked Closed in SAP.`,
+        notes: b.outstandingAmount < 0
+          ? `Credit note / return cleared in SAP.`
+          : `Bill cleared and marked Closed in SAP.`,
       });
     }
   }
@@ -417,16 +449,15 @@ export async function reconcileDailySapExport(
       continue;
     }
 
+    const activeInvoices = c.invoices.filter(i => i.status !== 'Closed' && i.outstandingAmount > 0);
     const activeTotal = Math.round(
-      c.invoices
-        .filter(i => i.status !== 'Closed' && i.status !== 'Payment Received' && i.actionType !== 'No Action')
-        .reduce((sum, i) => sum + i.outstandingAmount, 0) * 100
+      activeInvoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0) * 100
     ) / 100;
 
     await prisma.customer.update({
       where: { id: c.id },
       data: {
-        totalOutstanding: activeTotal,
+        totalOutstanding: Math.max(0, activeTotal),
         isFlagged: activeTotal === 0 ? false : c.isFlagged,
       },
     });

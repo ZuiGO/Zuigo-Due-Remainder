@@ -353,16 +353,25 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
   const parsedBills: ParsedSapBill[] = [];
 
   for (const row of rawRows) {
-    const rawLedger = String(
-      getRowVal(row, ['Ledger Code', 'ledger_code', 'LedgerCode', 'Ledger', 'Account Code']) || ''
-    ).trim();
     const rawParty = String(
       getRowVal(row, ['Party Name', 'party_name', 'PartyName', 'Customer Name', 'Party']) || ''
     ).trim();
+    let rawLedger = String(
+      getRowVal(row, ['Ledger Code', 'ledger_code', 'LedgerCode', 'Ledger', 'Account Code']) || ''
+    ).trim();
 
     // Discard Grand Total or empty rows
-    if (!rawLedger || /grand\s*total/i.test(rawLedger) || /grand\s*total/i.test(rawParty)) {
+    if (/grand\s*total/i.test(rawLedger) || /grand\s*total/i.test(rawParty)) {
       continue;
+    }
+
+    if (!rawParty && !rawLedger) {
+      continue;
+    }
+
+    // If Ledger Code column is missing in export, derive a deterministic code from Party Name
+    if (!rawLedger) {
+      rawLedger = `LEDGER_${rawParty.replace(/[^A-Za-z0-9]/g, '_').toUpperCase().slice(0, 24)}`;
     }
 
     const billNo = String(

@@ -25,6 +25,10 @@ export async function GET(req: NextRequest) {
       tenantId,
     };
 
+    if (filter !== 'SETTLED') {
+      whereClause.status = { not: 'Closed' };
+    }
+
     if (search) {
       whereClause.OR = [
         { customer: { rawLedgerName: { contains: search, mode: 'insensitive' } } },
@@ -139,13 +143,21 @@ export async function GET(req: NextRequest) {
     // daysOverdue / agingBucket stored at import time go stale the next day: always recompute from dueDate.
     const invoices = rawInvoices.map((inv: any) => ({ ...inv, ...computeAging(inv.dueDate, now) }));
 
-    // Compute live aging statistics for dashboard from all invoices for this tenant
+    // Compute live aging statistics for dashboard from all active open ledger invoices for this tenant
     const allInvoices = await prisma.invoice.findMany({
       where: {
         tenantId,
+        status: { not: 'Closed' },
       },
       include: {
         customer: true,
+      },
+    });
+
+    let settledCount = await prisma.invoice.count({
+      where: {
+        tenantId,
+        status: 'Closed',
       },
     });
 
@@ -163,7 +175,6 @@ export async function GET(req: NextRequest) {
     let upcomingCount = 0;
     let dueTodayCount = 0;
     let overdueCount = 0;
-    let settledCount = 0;
     let pendingCount = 0;
     let partiallySettledCount = 0;
     let tradeInvoiceCount = 0;
