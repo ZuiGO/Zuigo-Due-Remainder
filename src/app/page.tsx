@@ -55,7 +55,7 @@ export default function DashboardPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // Table Filters & Search
-  const [filter, setFilter] = useState<string>('ALL');
+  const [filter, setFilter] = useState<string>('CUSTOMER_DUES');
   const [search, setSearch] = useState<string>('');
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
 
@@ -779,34 +779,34 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* KPI Financial Overview Cards (1:1 Excel Match) */}
+      {/* KPI Financial Overview Cards */}
       {(() => {
         const pct = (n: number, d: number) => (d > 0 ? Math.min(100, Math.round((n / d) * 100)) : 0);
         const cards = [
           {
-            label: 'Total Bill Amount',
-            value: `₹${stats ? stats.totalReceivables.toLocaleString('en-IN') : '0'}`,
-            note: `Matches Excel Ledger (Customer Trade: ₹${stats ? stats.tradeReceivables.toLocaleString('en-IN') : '0'})`,
-            foot: `${stats?.totalCount || 0} open bills`,
+            label: 'Customer Bill Amount',
+            value: `₹${stats ? stats.tradeReceivables.toLocaleString('en-IN') : '0'}`,
+            note: `${stats?.tradeInvoiceCount || 0} customer bills (Excludes TDS, bills & advances)`,
+            foot: 'trade billed',
             percent: 100,
             icon: <TrendingUp className="w-4 h-4" />,
             chip: 'kpi-chip-teal',
           },
           {
-            label: 'Total Outstanding',
-            value: `₹${stats ? stats.totalOutstandingAmount.toLocaleString('en-IN') : '0'}`,
-            note: `Matches Excel Ledger (Customer Dues: ₹${stats ? stats.tradeOutstanding.toLocaleString('en-IN') : '0'})`,
-            foot: 'of total billed',
-            percent: pct(stats?.totalOutstandingAmount || 0, stats?.totalReceivables || 0),
+            label: 'Outstanding Customer Dues',
+            value: `₹${stats ? stats.tradeOutstanding.toLocaleString('en-IN') : '0'}`,
+            note: `Real customer dues to collect · Net SAP Ledger: ₹${stats ? stats.totalOutstandingAmount.toLocaleString('en-IN') : '0'}`,
+            foot: 'of customer billed',
+            percent: pct(stats?.tradeOutstanding || 0, stats?.tradeReceivables || 0),
             icon: <CreditCard className="w-4 h-4" />,
             chip: 'kpi-chip-blue',
           },
           {
             label: 'Paid / Adjusted',
-            value: `₹${stats ? stats.totalPaidAmount.toLocaleString('en-IN') : '0'}`,
-            note: 'Matches Excel Ledger (Total collected / adjusted)',
+            value: `₹${stats ? stats.tradePaidAmount.toLocaleString('en-IN') : '0'}`,
+            note: 'Customer collections & adjustments received',
             foot: 'collected / adjusted',
-            percent: pct(stats?.totalPaidAmount || 0, stats?.totalReceivables || 0),
+            percent: pct(stats?.tradePaidAmount || 0, stats?.tradeReceivables || 0),
             icon: <CheckCircle2 className="w-4 h-4" />,
             chip: 'kpi-chip-teal',
           },
@@ -814,8 +814,8 @@ export default function DashboardPage() {
             label: 'Actionable Overdue',
             value: `₹${stats ? stats.totalOverdueAmount.toLocaleString('en-IN') : '0'}`,
             note: `${stats ? stats.overdueCount : 0} customer bills past due date (Eligible for reminders)`,
-            foot: 'of total outstanding overdue',
-            percent: pct(stats?.totalOverdueAmount || 0, stats?.totalOutstandingAmount || 0),
+            foot: 'of customer dues overdue',
+            percent: pct(stats?.totalOverdueAmount || 0, stats?.tradeOutstanding || 0),
             icon: <AlertCircle className="w-4 h-4" />,
             chip: 'kpi-chip-red',
             valueClass: 'text-[#ce514c]',
@@ -874,14 +874,14 @@ export default function DashboardPage() {
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex items-center gap-1.5 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold overflow-x-auto shadow-2xs">
             {[
-              { id: 'ALL', label: 'All Ledger', count: stats?.totalCount },
               { id: 'CUSTOMER_DUES', label: 'Customer Dues', count: stats?.tradeInvoiceCount },
               { id: 'OVERDUE', label: 'Overdue', count: stats?.overdueCount },
               { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
               { id: 'PARTIALLY_SETTLED', label: 'Partially Paid', count: stats?.partiallySettledCount },
               { id: 'SETTLED', label: 'Settled', count: stats?.settledCount },
-              { id: 'CREDIT_NOTES', label: 'Credit Notes', count: stats?.creditNotesCount },
+              { id: 'CREDIT_NOTES', label: 'Advances & Credit Notes', count: stats?.creditNotesCount },
               { id: 'INTERNAL', label: 'Internal & TDS (Muted)', count: stats?.internalCount },
+              { id: 'ALL_LEDGER', label: 'All Raw Ledger', count: stats?.totalCount },
             ].map((tab) => (
               <button
                 key={tab.id}

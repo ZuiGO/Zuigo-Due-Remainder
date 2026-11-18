@@ -44,64 +44,59 @@ export async function GET(req: NextRequest) {
       whereClause.OR = [
         { customer: { status: { in: ['EXCLUDED', 'INTERNAL_MUTED'] } } },
         { actionType: 'No Action' },
+        { status: 'Internal / Muted' },
       ];
-    } else if (filter === 'CREDIT_NOTES' || filter === 'CREDIT NOTES') {
+    } else if (filter === 'CREDIT_NOTES' || filter === 'CREDIT NOTES' || filter === 'ADVANCES') {
       whereClause.OR = [
         { outstandingAmount: { lt: 0 } },
         { billAmount: { lt: 0 } },
         { status: 'Credit Note' },
+        { billNo: { startsWith: 'AD' } },
       ];
-    } else if (filter === 'ALL_LEDGER' || filter === 'ALL') {
-      // Show entire uploaded ledger matching Excel 1:1
-    } else if (filter === 'CUSTOMER_DUES' || filter === 'TRADE') {
+    } else if (filter === 'ALL_LEDGER') {
+      // Show entire uploaded ledger matching raw Excel 1:1
+    } else {
+      // ALL, CUSTOMER_DUES, OVERDUE, UPCOMING, PARTIALLY_SETTLED, SETTLED
+      // Strictly show active trade customer dues (no internal bills, no TDS, no negative advances)
       whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.actionType = 'Follow-up Required';
-      whereClause.outstandingAmount = { gt: 0 };
-    } else if (filter === 'FLAGGED') {
-      whereClause.customer = { isFlagged: true, status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.actionType = { not: 'No Action' };
-    } else if (filter === 'PENDING') {
-      whereClause.status = 'Pending';
-      whereClause.outstandingAmount = { gt: 0 };
-      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.actionType = { not: 'No Action' };
-    } else if (filter === 'PARTIALLY_SETTLED' || filter === 'PARTIALLY SETTLED') {
-      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.actionType = { not: 'No Action' };
-      whereClause.OR = [
-        { status: 'Partially Settled' },
-        { status: 'Partially Paid' },
-        { AND: [{ adjustment: { gt: 0 } }, { outstandingAmount: { gt: 0 } }] },
-      ];
-    } else if (filter === 'SETTLED') {
-      whereClause.billAmount = { gt: 0 };
-      whereClause.outstandingAmount = 0;
-      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.OR = [
-        { status: 'Settled' },
-        { status: 'Payment Received' },
-        { status: 'Closed' },
-        { status: 'Payment Received - Pending SAP Confirmation' },
-        { outstandingAmount: 0 },
-      ];
-    } else if (filter === 'OVERDUE') {
-      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.actionType = { not: 'No Action' };
-      whereClause.dueDate = { lt: todayStart };
-      whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
-    } else if (filter === 'DUE_TODAY' || filter === 'DUE TODAY') {
-      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.actionType = { not: 'No Action' };
-      whereClause.dueDate = { gte: todayStart, lte: todayEnd };
-      whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
-    } else if (filter === 'UPCOMING') {
-      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
-      whereClause.actionType = { not: 'No Action' };
-      whereClause.dueDate = { gt: todayEnd };
-      whereClause.outstandingAmount = { gt: 0 };
-      whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
+      whereClause.status = { notIn: ['Credit Note', 'Internal / Muted'] };
+
+      if (filter !== 'SETTLED') {
+        whereClause.actionType = { not: 'No Action' };
+        whereClause.outstandingAmount = { gt: 0 };
+        whereClause.billAmount = { gt: 0 };
+      }
+
+      if (filter === 'FLAGGED') {
+        whereClause.customer = { isFlagged: true, status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      } else if (filter === 'PENDING') {
+        whereClause.status = 'Pending';
+      } else if (filter === 'PARTIALLY_SETTLED' || filter === 'PARTIALLY SETTLED') {
+        whereClause.OR = [
+          { status: 'Partially Settled' },
+          { status: 'Partially Paid' },
+          { AND: [{ adjustment: { gt: 0 } }, { outstandingAmount: { gt: 0 } }] },
+        ];
+      } else if (filter === 'SETTLED') {
+        whereClause.billAmount = { gt: 0 };
+        whereClause.outstandingAmount = 0;
+        whereClause.OR = [
+          { status: 'Settled' },
+          { status: 'Payment Received' },
+          { status: 'Closed' },
+          { status: 'Payment Received - Pending SAP Confirmation' },
+          { outstandingAmount: 0 },
+        ];
+      } else if (filter === 'OVERDUE') {
+        whereClause.dueDate = { lt: todayStart };
+        whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
+      } else if (filter === 'DUE_TODAY' || filter === 'DUE TODAY') {
+        whereClause.dueDate = { gte: todayStart, lte: todayEnd };
+        whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
+      } else if (filter === 'UPCOMING') {
+        whereClause.dueDate = { gt: todayEnd };
+        whereClause.status = { notIn: ['Settled', 'Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Credit Note', 'Internal / Muted'] };
+      }
     }
 
     const rawInvoices = await prisma.invoice.findMany({
@@ -144,19 +139,41 @@ export async function GET(req: NextRequest) {
     });
 
     let filteredInvoices = rawInvoices;
-    if (filter === 'SETTLED') {
+    if (filter === 'INTERNAL' || filter === 'MUTED' || filter === 'TDS') {
       filteredInvoices = rawInvoices.filter((inv: any) => {
         const isInternal =
           inv.customer?.status === 'EXCLUDED' ||
           inv.customer?.status === 'INTERNAL_MUTED' ||
           isNonTradeOrExcludedAccount(inv.customer?.rawLedgerName || inv.customer?.partyName || '') ||
           isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) ||
-          inv.status === 'Internal / Muted';
+          inv.status === 'Internal / Muted' ||
+          inv.actionType === 'No Action';
+        return isInternal;
+      });
+    } else if (filter === 'CREDIT_NOTES' || filter === 'CREDIT NOTES' || filter === 'ADVANCES') {
+      filteredInvoices = rawInvoices.filter((inv: any) => {
+        const isCreditOrAdv =
+          inv.outstandingAmount < 0 ||
+          inv.billAmount < 0 ||
+          inv.status === 'Credit Note' ||
+          isAdvanceOrCreditBillNo(inv.billNo);
+        return isCreditOrAdv;
+      });
+    } else if (filter !== 'ALL_LEDGER') {
+      // Strictly exclude any internal/utility bills, TDS, and credit/advance balances from all standard dues views
+      filteredInvoices = rawInvoices.filter((inv: any) => {
+        const isInternal =
+          inv.customer?.status === 'EXCLUDED' ||
+          inv.customer?.status === 'INTERNAL_MUTED' ||
+          isNonTradeOrExcludedAccount(inv.customer?.rawLedgerName || inv.customer?.partyName || '') ||
+          isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) ||
+          inv.status === 'Internal / Muted' ||
+          inv.actionType === 'No Action';
 
         const isAdvance = isAdvanceOrCreditBillNo(inv.billNo) || /advance/i.test(inv.narration || '');
         const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
 
-        return !isInternal && !isAdvance && !isCreditNote && inv.billAmount > 0;
+        return !isInternal && !isAdvance && !isCreditNote;
       });
     }
 

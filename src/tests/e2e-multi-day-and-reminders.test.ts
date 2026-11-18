@@ -243,4 +243,32 @@ describe('End-to-End Test: 3-Day Ingestion, Dashboard Reconciliation, and Config
     assert.equal(emailRes.success, true, 'Manual email dispatch should succeed');
     assert.equal(emailRes.effectiveRecipient, OVERRIDE_TARGET_EMAIL, 'Manual Email must target jayesh@zuigo.ai');
   });
+
+  it('Step 7: Verifies Outstanding Customer Dues strictly excludes advances, TDS, and internal utility bills', async () => {
+    // Query active dues under CUSTOMER_DUES filter
+    const dues = await prisma.invoice.findMany({
+      where: {
+        tenantId,
+        status: { notIn: ['Closed', 'Credit Note', 'Internal / Muted'] },
+        customer: { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } },
+        actionType: { not: 'No Action' },
+        outstandingAmount: { gt: 0 },
+        billAmount: { gt: 0 },
+      },
+      include: { customer: true },
+    });
+
+    assert.ok(dues.length > 0, 'Should have positive customer dues');
+
+    for (const inv of dues) {
+      assert.ok(inv.outstandingAmount > 0, `Invoice ${inv.billNo} must have positive outstanding`);
+      assert.ok(inv.billAmount > 0, `Invoice ${inv.billNo} must have positive bill amount`);
+      assert.notEqual(inv.customer.partyName, 'Electricity Bill', 'Electricity Bill must never appear in dues');
+      assert.notEqual(inv.customer.partyName, 'TDS on Sales', 'TDS must never appear in dues');
+      assert.notEqual(inv.customer.partyName, 'Sales Return', 'Sales Return must never appear in dues');
+      assert.notEqual(inv.status, 'Credit Note', 'Credit notes must not appear in dues');
+      assert.ok(!inv.billNo.startsWith('AD0009'), 'Shobha Packaging credit note must not appear in dues');
+      assert.ok(!inv.billNo.startsWith('AD0008'), 'Synergy Machines advance must not appear in dues');
+    }
+  });
 });

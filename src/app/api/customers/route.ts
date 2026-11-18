@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     const customers = await prisma.customer.findMany({
       where: {
         tenantId: tenant?.id,
-        status: { not: 'EXCLUDED' },
+        status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] },
       },
       include: {
         contacts: true,
@@ -36,7 +36,22 @@ export async function GET(req: NextRequest) {
       orderBy: { rawLedgerName: 'asc' },
     });
 
-    return NextResponse.json({ success: true, customers });
+    // Ensure customer totalOutstanding reflects strictly positive actionable dues (excludes advances/credit notes)
+    const cleanCustomers = customers.map(c => {
+      const activeInvoices = c.invoices.filter(
+        i => i.outstandingAmount > 0 && i.billAmount > 0 && i.status !== 'Closed' && i.status !== 'Credit Note'
+      );
+      const activeOutstanding = Math.round(
+        activeInvoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0) * 100
+      ) / 100;
+      return {
+        ...c,
+        totalOutstanding: activeOutstanding,
+        invoices: activeInvoices,
+      };
+    });
+
+    return NextResponse.json({ success: true, customers: cleanCustomers });
   } catch (error: any) {
     console.error('Fetch Customers error:', error);
     return NextResponse.json({ error: error?.message || 'Server error' }, { status: 500 });
