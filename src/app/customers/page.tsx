@@ -696,6 +696,11 @@ export default function CustomersPage() {
                         <div className="text-[11px] text-slate-400 mt-0.5">
                           {c.invoices?.length || 0} invoice(s)
                         </div>
+                        {c.advanceAmount > 0 && (
+                          <div className="text-[10px] text-amber-700 font-bold mt-0.5">
+                            Advance Paid: ₹{c.advanceAmount.toLocaleString('en-IN')}
+                          </div>
+                        )}
                       </td>
 
                       {/* 4. Configure Frequency (Manual Input: Days interval & msgs/day) */}

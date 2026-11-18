@@ -870,6 +870,33 @@ export default function DashboardPage() {
         );
       })()}
 
+      {/* SAP LEDGER RECONCILIATION BREAKDOWN BAR */}
+      {stats && (
+        <div className="bg-[#f8fbfc] border border-[#dce8ec] rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-2xs">
+          <div className="flex items-center gap-2 text-slate-800 font-semibold">
+            <FileSpreadsheet className="w-4 h-4 text-[#09AEB8]" />
+            <span>SAP Ledger Grand Total Reconciliation:</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs">
+            <span className="text-slate-700">
+              Customer Trade Dues: <strong className="text-slate-900">₹{stats.tradeOutstanding.toLocaleString('en-IN')}</strong>
+            </span>
+            <span className="text-slate-400 font-bold">•</span>
+            <span className="text-amber-800">
+              Advance Paid Amount: <strong>₹{stats.creditNotesAmount.toLocaleString('en-IN')}</strong>
+            </span>
+            <span className="text-slate-400 font-bold">•</span>
+            <span className="text-purple-800">
+              TDS & Internal Bills: <strong>+₹{stats.internalMutedAmount.toLocaleString('en-IN')}</strong>
+            </span>
+            <span className="text-slate-400 font-bold">=</span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-50 border border-teal-200 text-teal-900 font-bold">
+              Net Excel Total: ₹{stats.totalOutstandingAmount.toLocaleString('en-IN')}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* UNIFIED DUES & INVOICES LEDGER TABLE */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden space-y-4 p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -903,9 +930,9 @@ export default function DashboardPage() {
               { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
               { id: 'PARTIALLY_SETTLED', label: 'Partially Paid', count: stats?.partiallySettledCount },
               { id: 'SETTLED', label: 'Settled', count: stats?.settledCount },
-              { id: 'CREDIT_NOTES', label: 'Advances & Credit Notes', count: stats?.creditNotesCount },
-              { id: 'INTERNAL', label: 'Internal & TDS (Muted)', count: stats?.internalCount },
-              { id: 'ALL_LEDGER', label: 'All Raw Ledger', count: stats?.totalCount },
+              { id: 'CREDIT_NOTES', label: 'Advance Paid & Credits', count: stats?.creditNotesCount },
+              { id: 'INTERNAL', label: 'TDS & Internal Bills', count: stats?.internalCount },
+              { id: 'ALL_LEDGER', label: 'All Raw Ledger (Full Audit)', count: stats?.totalCount },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1044,29 +1071,42 @@ export default function DashboardPage() {
                   const hasContactInfo = Boolean(primaryContact && (primaryContact.mobileNumber || primaryContact.whatsappNumber || primaryContact.emailId));
                   const commitment = inv.commitments && inv.commitments.length > 0 ? inv.commitments[0] : null;
 
-                  const isInternalAccount =
-                    inv.customer?.status === 'INTERNAL_MUTED' ||
-                    inv.customer?.status === 'EXCLUDED' ||
-                    /electricity/i.test(inv.customer?.partyName || '') ||
-                    /tds/i.test(inv.customer?.partyName || '') ||
-                    /sales return/i.test(inv.customer?.partyName || '') ||
-                    /phonepe/i.test(inv.narration || '') ||
-                    inv.status === 'Internal / Muted';
+                  const isTds =
+                    inv.itemType === 'TDS_VOUCHER' ||
+                    /tds\b/i.test(inv.customer?.partyName || '') ||
+                    /tds\b/i.test(inv.customer?.rawLedgerName || '') ||
+                    /tds\b/i.test(inv.narration || '');
 
-                  const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
-                  const isExcludedAccount = inv.actionType === 'No Action' || inv.isExcluded || isInternalAccount || isCreditNote;
+                  const isInternalUtil =
+                    inv.itemType === 'INTERNAL_UTILITY' ||
+                    /electricity/i.test(inv.customer?.partyName || '') ||
+                    /paid electricity/i.test(inv.narration || '') ||
+                    /phonepe/i.test(inv.narration || '');
+
+                  const isAdvance =
+                    inv.itemType === 'ADVANCE_PAYMENT' ||
+                    inv.outstandingAmount < 0 ||
+                    inv.billAmount < 0 ||
+                    inv.status === 'Credit Note' ||
+                    (/^AD\d/.test(inv.billNo) && !isTds && !isInternalUtil);
+
+                  const isBill = !isTds && !isInternalUtil && !isAdvance;
                   const isSelected = selectedInvoiceIds.has(inv.id);
 
                   return (
                     <tr key={inv.id} className={`hover:bg-slate-50/70 transition ${isSelected ? 'bg-cyan-50/30' : ''}`}>
                       {/* Checkbox */}
                       <td className="py-3 px-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleToggleInvoiceSelect(inv.id)}
-                          className="w-4 h-4 rounded text-[#09AEB8] focus:ring-[#09AEB8] border-slate-300 cursor-pointer"
-                        />
+                        {!isBill ? (
+                          <span className="text-slate-300 text-xs font-mono select-none">—</span>
+                        ) : (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleToggleInvoiceSelect(inv.id)}
+                            className="w-4 h-4 rounded text-[#09AEB8] focus:ring-[#09AEB8] border-slate-300 cursor-pointer"
+                          />
+                        )}
                       </td>
 
                       {/* Customer */}
@@ -1082,6 +1122,21 @@ export default function DashboardPage() {
                               {inv.customer?.isFlagged && (
                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-100 text-rose-700">
                                   <ShieldAlert className="w-2.5 h-2.5" /> Flagged
+                                </span>
+                              )}
+                              {isAdvance && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800">
+                                  Advance Paid
+                                </span>
+                              )}
+                              {isTds && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-purple-100 text-purple-800">
+                                  Tax Withholding
+                                </span>
+                              )}
+                              {isInternalUtil && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-100 text-slate-700">
+                                  Company Utility
                                 </span>
                               )}
                             </div>
@@ -1110,12 +1165,44 @@ export default function DashboardPage() {
 
                       {/* Bill Amount */}
                       <td className="py-3.5 px-4 text-slate-700 font-medium text-xs">
-                        ₹{inv.billAmount.toLocaleString('en-IN')}
+                        {isAdvance ? (
+                          <span className="text-slate-400 font-normal">—</span>
+                        ) : (
+                          `₹${inv.billAmount.toLocaleString('en-IN')}`
+                        )}
                       </td>
 
                       {/* Paid / Adjusted */}
                       <td className="py-3.5 px-4 text-emerald-700 font-medium">
                         {(() => {
+                          if (isAdvance) {
+                            const advVal = Math.abs(inv.outstandingAmount || inv.billAmount || 0);
+                            return (
+                              <>
+                                <div className="font-semibold text-xs text-emerald-700">₹{advVal.toLocaleString('en-IN')}</div>
+                                <span className="text-[9px] text-teal-700 font-bold block">Advance Paid Amount</span>
+                              </>
+                            );
+                          }
+
+                          if (isTds) {
+                            return (
+                              <>
+                                <div className="font-semibold text-xs text-purple-700">₹{inv.billAmount.toLocaleString('en-IN')}</div>
+                                <span className="text-[9px] text-purple-600 font-bold block">Tax Deducted (TDS)</span>
+                              </>
+                            );
+                          }
+
+                          if (isInternalUtil) {
+                            return (
+                              <>
+                                <div className="font-semibold text-xs text-blue-700">₹{inv.billAmount.toLocaleString('en-IN')}</div>
+                                <span className="text-[9px] text-blue-600 font-bold block">Paid via PhonePe</span>
+                              </>
+                            );
+                          }
+
                           const isFullySettled =
                             inv.status === 'Closed' ||
                             inv.status === 'Settled' ||
@@ -1146,9 +1233,28 @@ export default function DashboardPage() {
 
                       {/* Outstanding Due */}
                       <td className="py-3.5 px-4 font-bold text-slate-900">
-                        <span className={inv.outstandingAmount > 0 ? 'text-rose-600 font-black text-xs' : 'text-slate-600 font-medium text-xs'}>
-                          ₹{inv.outstandingAmount.toLocaleString('en-IN')}
-                        </span>
+                        {isAdvance ? (
+                          <div>
+                            <span className="text-slate-400 font-medium text-xs">₹0</span>
+                            <span className="text-[9px] text-amber-700 font-bold block">
+                              Credit (-₹{Math.abs(inv.outstandingAmount).toLocaleString('en-IN')})
+                            </span>
+                          </div>
+                        ) : isTds ? (
+                          <div>
+                            <span className="text-slate-400 font-medium text-xs">₹0</span>
+                            <span className="text-[9px] text-purple-600 font-medium block">TDS Voucher</span>
+                          </div>
+                        ) : isInternalUtil ? (
+                          <div>
+                            <span className="text-slate-400 font-medium text-xs">₹0</span>
+                            <span className="text-[9px] text-slate-500 font-medium block">Company Utility</span>
+                          </div>
+                        ) : (
+                          <span className={inv.outstandingAmount > 0 ? 'text-rose-600 font-black text-xs' : 'text-slate-600 font-medium text-xs'}>
+                            ₹{inv.outstandingAmount.toLocaleString('en-IN')}
+                          </span>
+                        )}
                       </td>
 
                       {/* Due Date & Commitment */}
@@ -1173,13 +1279,17 @@ export default function DashboardPage() {
 
                       {/* Status */}
                       <td className="py-3.5 px-4">
-                        {isInternalAccount ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200 inline-block">
-                            Internal / TDS (Muted)
-                          </span>
-                        ) : isCreditNote ? (
+                        {isAdvance ? (
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 inline-block">
-                            Credit Note (Cr)
+                            Advance Paid Amount
+                          </span>
+                        ) : isTds ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200 inline-block">
+                            TDS on Sales (Tax)
+                          </span>
+                        ) : isInternalUtil ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 inline-block">
+                            Internal Utility (Paid)
                           </span>
                         ) : (
                           <span className={`status-pill ${
@@ -1198,17 +1308,17 @@ export default function DashboardPage() {
 
                       {/* Actions */}
                       <td className="py-3.5 px-4 text-right">
-                        {isInternalAccount ? (
-                          <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-1 rounded-lg border border-purple-200 inline-block">
-                            Muted
+                        {isAdvance ? (
+                          <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 inline-block">
+                            Advance Paid
                           </span>
-                        ) : isCreditNote ? (
-                          <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 inline-block">
-                            Credit Note
+                        ) : isTds ? (
+                          <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2 py-1 rounded-lg border border-purple-200 inline-block">
+                            TDS Withheld
                           </span>
-                        ) : isExcludedAccount ? (
-                          <span className="text-[10px] font-semibold text-slate-400 italic bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 inline-block">
-                            Excluded
+                        ) : isInternalUtil ? (
+                          <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded-lg border border-slate-200 inline-block">
+                            Company Utility
                           </span>
                         ) : (
                           <div className="flex items-center justify-end gap-1.5">

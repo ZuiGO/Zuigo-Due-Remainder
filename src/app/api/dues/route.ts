@@ -179,6 +179,25 @@ export async function GET(req: NextRequest) {
 
     // daysOverdue / agingBucket stored at import time go stale the next day: always recompute from dueDate.
     const invoices = filteredInvoices.map((inv: any) => {
+      const isInternalUtility =
+        isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) ||
+        /electricity/i.test(inv.customer?.rawLedgerName || inv.customer?.partyName || '');
+
+      const isTdsRecord =
+        /tds\b/i.test(inv.customer?.rawLedgerName || inv.customer?.partyName || '') ||
+        /tds\b/i.test(inv.narration || '');
+
+      const isAdvancePayment =
+        inv.outstandingAmount < 0 ||
+        inv.billAmount < 0 ||
+        inv.status === 'Credit Note' ||
+        (isAdvanceOrCreditBillNo(inv.billNo) && !isInternalUtility && !isTdsRecord);
+
+      let itemType: 'BILL' | 'ADVANCE_PAYMENT' | 'TDS_VOUCHER' | 'INTERNAL_UTILITY' = 'BILL';
+      if (isTdsRecord) itemType = 'TDS_VOUCHER';
+      else if (isInternalUtility) itemType = 'INTERNAL_UTILITY';
+      else if (isAdvancePayment) itemType = 'ADVANCE_PAYMENT';
+
       const isSettled =
         inv.status === 'Closed' ||
         inv.status === 'Settled' ||
@@ -188,6 +207,10 @@ export async function GET(req: NextRequest) {
 
       const paidAmount = isSettled
         ? (inv.billAmount > 0 ? inv.billAmount : 0)
+        : isAdvancePayment
+        ? Math.abs(inv.outstandingAmount || inv.billAmount || 0)
+        : isTdsRecord || isInternalUtility
+        ? Math.abs(inv.billAmount || inv.outstandingAmount || 0)
         : Math.max(inv.adjustment || 0, Math.round(((inv.billAmount || 0) - Math.max(0, inv.outstandingAmount || 0)) * 100) / 100);
 
       return {
@@ -195,6 +218,10 @@ export async function GET(req: NextRequest) {
         ...computeAging(inv.dueDate, now),
         paidAmount,
         isSettled,
+        itemType,
+        isAdvancePayment,
+        isTdsRecord,
+        isInternalUtility,
       };
     });
 

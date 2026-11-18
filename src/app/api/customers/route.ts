@@ -44,9 +44,18 @@ export async function GET(req: NextRequest) {
       const activeOutstanding = Math.round(
         activeInvoices.reduce((sum, inv) => sum + inv.outstandingAmount, 0) * 100
       ) / 100;
+
+      const advanceInvoices = c.invoices.filter(
+        i => i.outstandingAmount < 0 || i.billAmount < 0 || i.status === 'Credit Note'
+      );
+      const advanceAmount = Math.round(
+        advanceInvoices.reduce((sum, inv) => sum + Math.abs(inv.outstandingAmount || inv.billAmount || 0), 0) * 100
+      ) / 100;
+
       return {
         ...c,
         totalOutstanding: activeOutstanding,
+        advanceAmount,
         invoices: activeInvoices,
       };
     });
