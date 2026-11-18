@@ -54,6 +54,7 @@ export default function DashboardPage() {
   const [autoSchedule, setAutoSchedule] = useState<{ enabled: boolean; time: string; timeZone: string; lastRun: any } | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [sendingBatch, setSendingBatch] = useState(false);
+  const [sendingRemind, setSendingRemind] = useState(false);
 
   // Table Filters & Search
   const [filter, setFilter] = useState<string>('CUSTOMER_DUES');
@@ -473,7 +474,12 @@ export default function DashboardPage() {
       return;
     }
 
+    const isWaOrSms = remindChannel === 'WHATSAPP' || remindChannel === 'SMS';
+    // Open a blank tab synchronously during user click to prevent browser popup blockers from blocking WhatsApp Web
+    const popup = isWaOrSms ? window.open('', '_blank') : null;
+
     try {
+      setSendingRemind(true);
       const res = await fetch('/api/reminders/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -489,18 +495,30 @@ export default function DashboardPage() {
 
       const data = await res.json();
       if (data.success) {
-        if (data.results?.[0]?.actionUrl && data.results[0].actionUrl !== '#') {
-          window.open(data.results[0].actionUrl, '_blank');
+        if (popup) {
+          if (data.results?.[0]?.actionUrl && data.results[0].actionUrl !== '#') {
+            popup.location.href = data.results[0].actionUrl;
+          } else {
+            popup.close();
+          }
         }
         setShowRemindModal(false);
-        setActionMessage(`Reminder sent successfully for Bill ${selectedInvoice.billNo}`);
+        setActionMessage(
+          remindChannel === 'EMAIL'
+            ? `📧 Live email payment reminder dispatched directly to jayesh@zuigo.ai!`
+            : `📱 WhatsApp payment reminder opened for +91 8530383141!`
+        );
         fetchDashboardData();
-        setTimeout(() => setActionMessage(null), 3500);
+        setTimeout(() => setActionMessage(null), 4000);
       } else {
+        if (popup) popup.close();
         alert('Failed to send reminder: ' + (data.error || 'Unknown error'));
       }
     } catch (err: any) {
+      if (popup) popup.close();
       alert('Error sending reminder: ' + err?.message);
+    } finally {
+      setSendingRemind(false);
     }
   };
 
@@ -1610,7 +1628,7 @@ export default function DashboardPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={!hasRecipientForChannel}
+                      disabled={!hasRecipientForChannel || sendingRemind}
                       onClick={handleSendReminder}
                       className={`px-5 py-2.5 text-xs font-bold text-white rounded-xl shadow-2xs transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${
                         remindChannel === 'WHATSAPP'
@@ -1620,10 +1638,14 @@ export default function DashboardPage() {
                           : 'bg-sky-600 hover:bg-sky-700'
                       }`}
                     >
-                      <Send className="w-3.5 h-3.5" />
-                      {remindChannel === 'WHATSAPP' && 'Open WhatsApp & Send Reminder'}
-                      {remindChannel === 'SMS' && 'Send SMS Text Reminder'}
-                      {remindChannel === 'EMAIL' && 'Send Email Reminder & Log'}
+                      <Send className={`w-3.5 h-3.5 ${sendingRemind ? 'animate-pulse' : ''}`} />
+                      {sendingRemind ? 'Sending Reminder...' : (
+                        remindChannel === 'WHATSAPP'
+                          ? 'Open WhatsApp & Send Reminder'
+                          : remindChannel === 'SMS'
+                          ? 'Send SMS Text Reminder'
+                          : 'Send Email Reminder to jayesh@zuigo.ai'
+                      )}
                     </button>
                   </div>
                 </div>

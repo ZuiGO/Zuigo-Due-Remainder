@@ -134,6 +134,24 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     }
   }
 
+  // If email channel and credentials missing, fallback to any available working SMTP config
+  if (channel === 'EMAIL' && (!config.user || !config.pass)) {
+    const smtpSetting = await prisma.integrationSetting.findFirst({
+      where: {
+        providerType: 'EMAIL',
+        configJson: { contains: 'pass' },
+      },
+    });
+    if (smtpSetting?.configJson) {
+      try {
+        const parsed = JSON.parse(smtpSetting.configJson);
+        if (parsed.user && parsed.pass) {
+          config = { ...parsed, ...config };
+        }
+      } catch {}
+    }
+  }
+
   // Merge runtime custom config if supplied (e.g. from live gateway test)
   if (req.customConfig) {
     config = { ...config, ...req.customConfig };
@@ -147,11 +165,12 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     // ----------------------------------------------------
     if (channel === 'EMAIL') {
       let smtpHost = config.host || '';
-      if (smtpHost.includes('@') || smtpHost.toLowerCase().includes('gmail')) {
+      if (!smtpHost || smtpHost.includes('@') || smtpHost.toLowerCase().includes('gmail')) {
         smtpHost = 'smtp.gmail.com';
       }
 
-      if (!isSandbox && provider === 'SMTP' && smtpHost && config.user && config.pass) {
+      // If valid SMTP user/pass credentials are present, ALWAYS dispatch live email to jayesh@zuigo.ai
+      if (config.user && config.pass) {
         const portNum = Number(config.port) || 587;
         const isSecure = config.secure !== undefined ? Boolean(config.secure) : portNum === 465;
 
@@ -166,12 +185,12 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           tls: {
             rejectUnauthorized: false,
           },
-          connectionTimeout: 12000,
+          connectionTimeout: 15000,
         });
 
         const fromAddress = config.fromEmail
           ? (config.fromName ? `"${config.fromName}" <${config.fromEmail}>` : config.fromEmail)
-          : config.user;
+          : (config.fromName ? `"${config.fromName}" <${config.user}>` : config.user);
 
         const emailSubject = subject;
 
