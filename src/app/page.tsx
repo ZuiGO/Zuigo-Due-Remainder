@@ -102,6 +102,89 @@ export default function DashboardPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Daily SAP Diff Inspector State (Yesterday vs Today)
+  const [diffExpanded, setDiffExpanded] = useState(true);
+  const [diffSubFilter, setDiffSubFilter] = useState<'ALL' | 'NEW' | 'MISSING_CONTACT' | 'SETTLED' | 'PARTIAL' | 'SAME'>('ALL');
+
+  // Quick Add Contact Modal State
+  const [addContactModal, setAddContactModal] = useState<{
+    isOpen: boolean;
+    customerId: string | null;
+    partyName: string;
+    ledgerCode: string;
+    personName: string;
+    mobileNumber: string;
+    emailId: string;
+    designation: string;
+    submitting: boolean;
+    error: string | null;
+  }>({
+    isOpen: false,
+    customerId: null,
+    partyName: '',
+    ledgerCode: '',
+    personName: 'Accounts',
+    mobileNumber: '+91 8530383141',
+    emailId: 'jayesh@zuigo.ai',
+    designation: 'Accounts Manager',
+    submitting: false,
+    error: null,
+  });
+
+  const handleOpenAddContact = (
+    customerId: string | null,
+    partyName: string,
+    ledgerCode?: string,
+    currentPhone?: string,
+    currentEmail?: string
+  ) => {
+    setAddContactModal({
+      isOpen: true,
+      customerId,
+      partyName,
+      ledgerCode: ledgerCode || '',
+      personName: 'Accounts',
+      mobileNumber: currentPhone || '+91 8530383141',
+      emailId: currentEmail || 'jayesh@zuigo.ai',
+      designation: 'Accounts Manager',
+      submitting: false,
+      error: null,
+    });
+  };
+
+  const handleSaveContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setAddContactModal((prev) => ({ ...prev, submitting: true, error: null }));
+      const res = await fetch('/api/customers/contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: addContactModal.customerId || undefined,
+          partyName: addContactModal.partyName,
+          ledgerCode: addContactModal.ledgerCode || undefined,
+          personName: addContactModal.personName?.trim() || 'Accounts',
+          mobileNumber: addContactModal.mobileNumber?.trim() || '+91 8530383141',
+          whatsappNumber: addContactModal.mobileNumber?.trim() || '+91 8530383141',
+          emailId: addContactModal.emailId?.trim() || 'jayesh@zuigo.ai',
+          designation: addContactModal.designation?.trim() || 'Accounts Manager',
+          isPrimary: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAddContactModal((prev) => ({ ...prev, isOpen: false, submitting: false }));
+        setActionMessage(`✓ Contact details registered for ${addContactModal.partyName}. Payment reminders are now enabled!`);
+        fetchDashboardData();
+        setTimeout(() => setActionMessage(null), 5000);
+      } else {
+        setAddContactModal((prev) => ({ ...prev, submitting: false, error: data.error || 'Failed to save contact' }));
+      }
+    } catch (err: any) {
+      setAddContactModal((prev) => ({ ...prev, submitting: false, error: err?.message || 'Network error' }));
+    }
+  };
+
   const fetchDashboardData = async (batchId?: string, activeFilter: string = filter, activeSearch: string = search) => {
     try {
       setLoading(true);
@@ -706,7 +789,7 @@ export default function DashboardPage() {
   }, [allInvoices, selectedInvoiceIds]);
 
   return (
-    <main className="px-[30px] pt-[27px] pb-10 max-w-[1600px] mx-auto w-full space-y-6">
+    <main className="px-5 sm:px-7 lg:px-9 pr-7 sm:pr-9 lg:pr-11 pt-[27px] pb-12 max-w-[1600px] mx-auto w-full space-y-6">
       {/* Welcome header with action buttons */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
         <div>
@@ -915,6 +998,382 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* DAILY SAP SHEET RECONCILIATION & DIFF INSPECTOR (YESTERDAY VS TODAY) */}
+      {latestBatch && (
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-slate-50 via-teal-50/20 to-slate-50 p-4 sm:p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-[#e8f9fa] text-[#078d96] border border-[#b8ecef]">
+                  <Sparkles className="w-3 h-3 text-[#09AEB8]" /> Daily SAP Diff Reconciliation
+                </span>
+                {latestBatch.newEntriesCount > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    +{latestBatch.newEntriesCount} New Bills Added Today
+                  </span>
+                )}
+                {latestBatch.newEntriesMissingContactCount > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
+                    <AlertTriangle className="w-3 h-3 text-rose-600" /> {latestBatch.newEntriesMissingContactCount} Missing Contact Details
+                  </span>
+                )}
+              </div>
+              <h3 className="font-display font-semibold text-base text-[#3A3A3A] flex items-center gap-2">
+                <span>Yesterday vs Today SAP Ledger Changes</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Comparing current export <strong className="text-slate-800 font-mono">{latestBatch.fileName}</strong>{' '}
+                ({new Date(latestBatch.importedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })})
+                {latestBatch.previousBatch ? (
+                  <>
+                    {' '}against prior export <strong className="text-slate-800 font-mono">{latestBatch.previousBatch.fileName}</strong>{' '}
+                    ({new Date(latestBatch.previousBatch.importedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })})
+                  </>
+                ) : (
+                  ' (Baseline import against existing ledger records)'
+                )}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              {recentBatches.length > 1 && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <span className="text-[11px] font-medium text-slate-400">Compare Batch:</span>
+                  <select
+                    value={selectedBatchId || latestBatch.id}
+                    onChange={(e) => {
+                      setSelectedBatchId(e.target.value);
+                      fetchDashboardData(e.target.value);
+                    }}
+                    className="text-xs py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#09AEB8]"
+                  >
+                    {recentBatches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.fileName} ({new Date(b.importedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <button
+                onClick={() => setDiffExpanded(!diffExpanded)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-semibold hover:bg-slate-50 transition"
+              >
+                <span>{diffExpanded ? 'Collapse Diff' : 'View Changes'}</span>
+                {diffExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {/* 4 Summary Diff Metric Pills */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 sm:p-5 bg-slate-50/50 border-b border-slate-100">
+            {/* New Rows Added */}
+            <div
+              onClick={() => {
+                setDiffExpanded(true);
+                setDiffSubFilter('NEW');
+              }}
+              className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                diffSubFilter === 'NEW'
+                  ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-200'
+                  : 'bg-white border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/30'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-emerald-800">
+                <span>New Rows Added Today</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+              </div>
+              <div className="text-xl font-display font-bold text-emerald-700 mt-1">
+                +{latestBatch.newEntriesCount || 0}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-1 flex items-center justify-between">
+                <span>
+                  {latestBatch.newEntriesMissingContactCount > 0 ? (
+                    <span className="text-rose-600 font-bold">⚠️ {latestBatch.newEntriesMissingContactCount} missing contact</span>
+                  ) : (
+                    <span className="text-emerald-600 font-semibold">✓ All contacts ready</span>
+                  )}
+                </span>
+              </div>
+            </div>
+
+            {/* Settled / Cleared Bills */}
+            <div
+              onClick={() => {
+                setDiffExpanded(true);
+                setDiffSubFilter('SETTLED');
+              }}
+              className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                diffSubFilter === 'SETTLED'
+                  ? 'bg-teal-50 border-teal-300 ring-2 ring-teal-200'
+                  : 'bg-white border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-teal-800">
+                <span>Settled in SAP</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+              </div>
+              <div className="text-xl font-display font-bold text-teal-700 mt-1">
+                {latestBatch.settledEntriesCount || 0}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-1">
+                {latestBatch.settledTotalAmount > 0
+                  ? `₹${latestBatch.settledTotalAmount.toLocaleString('en-IN')} paid since yesterday`
+                  : 'Cleared zero-balance bills'}
+              </div>
+            </div>
+
+            {/* Partial Payments */}
+            <div
+              onClick={() => {
+                setDiffExpanded(true);
+                setDiffSubFilter('PARTIAL');
+              }}
+              className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                diffSubFilter === 'PARTIAL'
+                  ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-200'
+                  : 'bg-white border-slate-200 hover:border-blue-300 hover:bg-blue-50/30'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-blue-800">
+                <span>Partial Payments</span>
+                <TrendingUp className="w-3.5 h-3.5 text-blue-600" />
+              </div>
+              <div className="text-xl font-display font-bold text-blue-700 mt-1">
+                {latestBatch.partialPaymentsCount || 0}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-1">
+                {latestBatch.partialPaidTotalAmount > 0
+                  ? `₹${latestBatch.partialPaidTotalAmount.toLocaleString('en-IN')} reduced balance`
+                  : 'Partial recovery in SAP'}
+              </div>
+            </div>
+
+            {/* Continuing Unchanged */}
+            <div
+              onClick={() => {
+                setDiffExpanded(true);
+                setDiffSubFilter('SAME');
+              }}
+              className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                diffSubFilter === 'SAME'
+                  ? 'bg-slate-100 border-slate-300 ring-2 ring-slate-200'
+                  : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                <span>Unchanged Ledger</span>
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+              </div>
+              <div className="text-xl font-display font-bold text-slate-700 mt-1">
+                {latestBatch.sameEntriesCount || 0}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-1">Continuing carry-over bills</div>
+            </div>
+          </div>
+
+          {/* Expanded Breakdown Table & Contact Inspector */}
+          {diffExpanded && (
+            <div className="p-4 sm:p-5 space-y-4">
+              {/* Sub-filter tabs */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Filter Diff:</span>
+                  {[
+                    { id: 'ALL', label: 'All Reconciliation Events', count: latestBatch.diffLogs?.length || 0 },
+                    { id: 'NEW', label: '✨ New Bills Added', count: latestBatch.newEntriesCount },
+                    { id: 'MISSING_CONTACT', label: '⚠️ Missing Contacts Alert', count: latestBatch.newEntriesMissingContactCount, alert: true },
+                    { id: 'SETTLED', label: '✓ Settled / Cleared', count: latestBatch.settledEntriesCount },
+                    { id: 'PARTIAL', label: '📉 Partial Payments', count: latestBatch.partialPaymentsCount },
+                    { id: 'SAME', label: '⚪ Continuing Unchanged', count: latestBatch.sameEntriesCount },
+                  ].map((subTab) => (
+                    <button
+                      key={subTab.id}
+                      onClick={() => setDiffSubFilter(subTab.id as any)}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1.5 whitespace-nowrap ${
+                        diffSubFilter === subTab.id
+                          ? subTab.alert
+                            ? 'bg-rose-600 text-white shadow-2xs font-bold'
+                            : 'bg-[#09AEB8] text-white shadow-2xs font-bold'
+                          : subTab.alert && (subTab.count || 0) > 0
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 font-bold'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <span>{subTab.label}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          diffSubFilter === subTab.id ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {subTab.count || 0}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                {latestBatch.newEntriesCount > 0 && (
+                  <button
+                    onClick={() => {
+                      setFilter('NEW_TODAY');
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold hover:bg-emerald-100 transition shadow-2xs"
+                  >
+                    <span>View Only New Rows in Ledger Table</span>
+                    <ArrowUpRight className="w-3.5 h-3.5 text-emerald-600" />
+                  </button>
+                )}
+              </div>
+
+              {/* Diff items list */}
+              {(() => {
+                const logs = (latestBatch.diffLogs || []).filter((log: any) => {
+                  if (diffSubFilter === 'NEW') return log.diffType === 'NEW_ENTRY';
+                  if (diffSubFilter === 'MISSING_CONTACT') return log.diffType === 'NEW_ENTRY' && log.isMissingContact;
+                  if (diffSubFilter === 'SETTLED') return log.diffType === 'SETTLED';
+                  if (diffSubFilter === 'PARTIAL') return log.diffType === 'PARTIAL_PAYMENT';
+                  if (diffSubFilter === 'SAME') return log.diffType === 'SAME_ENTRY';
+                  return true;
+                });
+
+                if (logs.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      No diff logs match the selected filter.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                    <table className="w-full text-left text-xs min-w-[950px]">
+                      <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                        <tr>
+                          <th className="py-2.5 px-3">Change Event</th>
+                          <th className="py-2.5 px-3">Customer Party & Ledger</th>
+                          <th className="py-2.5 px-3">Bill No</th>
+                          <th className="py-2.5 px-3">Balance Change</th>
+                          <th className="py-2.5 px-3">Contact Verification</th>
+                          <th className="py-2.5 px-3 pr-6">Plain Explanation</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {logs.map((item: any, idx: number) => {
+                          const isNew = item.diffType === 'NEW_ENTRY';
+                          const isSettled = item.diffType === 'SETTLED';
+                          const isPartial = item.diffType === 'PARTIAL_PAYMENT';
+
+                          return (
+                            <tr
+                              key={item.id || idx}
+                              className={`hover:bg-slate-50/60 transition ${
+                                isNew ? 'bg-emerald-50/20' : isSettled ? 'bg-teal-50/10' : ''
+                              }`}
+                            >
+                              {/* Event Badge */}
+                              <td className="py-3 px-3">
+                                {isNew ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                    <Sparkles className="w-2.5 h-2.5 text-emerald-600" /> NEW ROW ADDED
+                                  </span>
+                                ) : isSettled ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
+                                    <CheckCircle2 className="w-2.5 h-2.5 text-teal-600" /> FULLY SETTLED
+                                  </span>
+                                ) : isPartial ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                                    <TrendingUp className="w-2.5 h-2.5 text-blue-600" /> PARTIAL PAYMENT
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">
+                                    UNCHANGED
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Customer Party */}
+                              <td className="py-3 px-3 font-medium text-slate-800">
+                                <div className="font-bold text-slate-900">{item.partyName}</div>
+                                {item.ledgerCode && (
+                                  <div className="text-[10px] font-mono text-slate-400">{item.ledgerCode}</div>
+                                )}
+                              </td>
+
+                              {/* Bill No */}
+                              <td className="py-3 px-3 font-mono font-semibold text-slate-700">
+                                {item.billNo}
+                              </td>
+
+                              {/* Balance Change */}
+                              <td className="py-3 px-3">
+                                {isNew ? (
+                                  <span className="font-extrabold text-emerald-700 text-xs">
+                                    +₹{(item.currentBalance || 0).toLocaleString('en-IN')}
+                                  </span>
+                                ) : isSettled ? (
+                                  <span className="font-semibold text-slate-600 text-xs">
+                                    ₹{(item.previousBalance || 0).toLocaleString('en-IN')}{' '}
+                                    <span className="text-teal-700 font-bold">→ ₹0 Cleared</span>
+                                  </span>
+                                ) : isPartial ? (
+                                  <span className="font-semibold text-slate-600 text-xs">
+                                    ₹{(item.previousBalance || 0).toLocaleString('en-IN')} →{' '}
+                                    <span className="text-blue-700 font-bold">
+                                      ₹{(item.currentBalance || 0).toLocaleString('en-IN')}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="font-medium text-slate-600">
+                                    ₹{(item.currentBalance || 0).toLocaleString('en-IN')}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Contact Verification */}
+                              <td className="py-3 px-3">
+                                {item.hasContact ? (
+                                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+                                    <CheckCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                    <span>
+                                      Contact Linked: {item.contactPerson || 'Accounts'} ({item.contactPhone || item.contactEmail})
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                                      Missing Contact — Reminders Blocked
+                                    </span>
+                                    <button
+                                      onClick={() => handleOpenAddContact(item.customerId, item.partyName, item.ledgerCode)}
+                                      className="px-2.5 py-1 rounded-lg bg-[#09AEB8] text-white text-[11px] font-bold hover:brightness-95 transition shadow-2xs flex items-center gap-1"
+                                      title="Add phone number or email to enable payment reminders"
+                                    >
+                                      <Phone className="w-3 h-3" /> + Add Contact
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Plain Explanation */}
+                              <td className="py-3 px-3 pr-6 text-slate-600 text-[11px] max-w-xs">
+                                {item.notes || 'Reconciled during import'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* UNIFIED DUES & INVOICES LEDGER TABLE */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden space-y-4 p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -944,6 +1403,9 @@ export default function DashboardPage() {
           <div className="flex items-center gap-1.5 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold overflow-x-auto shadow-2xs">
             {[
               { id: 'CUSTOMER_DUES', label: 'Customer Dues', count: stats?.tradeInvoiceCount },
+              ...(stats?.newTodayCount && stats.newTodayCount > 0
+                ? [{ id: 'NEW_TODAY', label: '✨ New Rows Added Today', count: stats.newTodayCount }]
+                : []),
               { id: 'OVERDUE', label: 'Overdue', count: stats?.overdueCount },
               { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
               { id: 'PARTIALLY_SETTLED', label: 'Partially Paid', count: stats?.partiallySettledCount },
@@ -1032,7 +1494,7 @@ export default function DashboardPage() {
 
         {/* Ledger Table */}
         <div className="overflow-x-auto border border-slate-100 rounded-xl">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm min-w-[1050px]">
             <thead className="bg-slate-50/80 text-slate-600 text-[11px] uppercase font-bold border-b border-slate-200 tracking-wider">
               <tr>
                 <th className="py-3 px-3 w-10 text-center">
@@ -1051,7 +1513,7 @@ export default function DashboardPage() {
                 <th className="py-3 px-4 text-rose-600">Outstanding Due</th>
                 <th className="py-3 px-4">Due Date & Commitment</th>
                 <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 pr-6 pl-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1112,7 +1574,12 @@ export default function DashboardPage() {
                   const isSelected = selectedInvoiceIds.has(inv.id);
 
                   return (
-                    <tr key={inv.id} className={`hover:bg-slate-50/70 transition ${isSelected ? 'bg-cyan-50/30' : ''}`}>
+                    <tr
+                      key={inv.id}
+                      className={`hover:bg-slate-50/70 transition ${isSelected ? 'bg-cyan-50/30' : ''} ${
+                        inv.isNewToday ? 'border-l-4 border-l-emerald-500 bg-emerald-50/25' : ''
+                      }`}
+                    >
                       {/* Checkbox */}
                       <td className="py-3 px-3 text-center">
                         {!isBill ? (
@@ -1164,9 +1631,17 @@ export default function DashboardPage() {
                                   {primaryContact?.personName || 'Accounts'} • {primaryContact?.mobileNumber || primaryContact?.whatsappNumber || primaryContact?.emailId}
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                  <AlertTriangle className="w-2.5 h-2.5 text-amber-600" /> No direct contact
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                    <AlertTriangle className="w-2.5 h-2.5 text-amber-600" /> No direct contact
+                                  </span>
+                                  <button
+                                    onClick={() => handleOpenAddContact(inv.customerId, inv.customer?.partyName || inv.customer?.rawLedgerName, inv.customer?.ledgerCode)}
+                                    className="text-[10px] text-[#09AEB8] hover:text-[#078d96] font-bold underline"
+                                  >
+                                    + Add Contact
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </div>
@@ -1175,7 +1650,14 @@ export default function DashboardPage() {
 
                       {/* Bill No & Date */}
                       <td className="py-3.5 px-4 text-slate-700">
-                        <div className="font-semibold text-xs font-mono">{inv.billNo}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-xs font-mono">{inv.billNo}</span>
+                          {inv.isNewToday && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                              <Sparkles className="w-2.5 h-2.5 text-emerald-600" /> New Today
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[11px] text-slate-400">
                           {new Date(inv.billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                         </div>
@@ -1325,7 +1807,7 @@ export default function DashboardPage() {
                       </td>
 
                       {/* Actions */}
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="py-3.5 pr-6 pl-4 text-right">
                         {isAdvance ? (
                           <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 inline-block">
                             Advance Paid
@@ -2209,6 +2691,108 @@ export default function DashboardPage() {
                 Close Preview
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK ADD CONTACT MODAL */}
+      {addContactModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                  <Phone className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900">Add Customer Contact Details</h3>
+                  <p className="text-[11px] text-slate-500">Enable automatic and manual payment reminders</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAddContactModal((prev) => ({ ...prev, isOpen: false }))}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveContact} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-500 font-medium mb-1">Customer Party Name</label>
+                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-semibold text-slate-800">
+                  {addContactModal.partyName}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Contact Person / Department</label>
+                <input
+                  type="text"
+                  value={addContactModal.personName}
+                  onChange={(e) => setAddContactModal((prev) => ({ ...prev, personName: e.target.value }))}
+                  required
+                  placeholder="e.g. Accounts Department or Manager Name"
+                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Mobile / WhatsApp Number</label>
+                <div className="relative">
+                  <Phone className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                  <input
+                    type="text"
+                    value={addContactModal.mobileNumber}
+                    onChange={(e) => setAddContactModal((prev) => ({ ...prev, mobileNumber: e.target.value }))}
+                    required
+                    placeholder="+91 8530383141"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8] font-mono text-xs"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Pre-filled with your designated notification number (+91 8530383141).</p>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Email Address</label>
+                <div className="relative">
+                  <Mail className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                  <input
+                    type="email"
+                    value={addContactModal.emailId}
+                    onChange={(e) => setAddContactModal((prev) => ({ ...prev, emailId: e.target.value }))}
+                    required
+                    placeholder="jayesh@zuigo.ai"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8] font-mono text-xs"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Pre-filled with your designated notification email (jayesh@zuigo.ai).</p>
+              </div>
+
+              {addContactModal.error && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
+                  {addContactModal.error}
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddContactModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-medium transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addContactModal.submitting}
+                  className="px-4 py-2 rounded-xl bg-[#09AEB8] text-white font-bold hover:brightness-95 transition shadow-2xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Check className="w-4 h-4" />
+                  {addContactModal.submitting ? 'Saving Contact...' : 'Save & Enable Reminders'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

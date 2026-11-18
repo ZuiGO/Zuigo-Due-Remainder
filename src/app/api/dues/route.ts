@@ -17,6 +17,138 @@ export async function GET(req: NextRequest) {
 
     const tenantId = tenant?.id;
 
+    // 1. Fetch import batches early to cross-reference daily changes & diffs
+    const selectedBatchId = searchParams.get('batchId');
+
+    const recentBatches = await prisma.importBatch.findMany({
+      where: { tenantId },
+      orderBy: { importedAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        fileName: true,
+        importedAt: true,
+        rowCount: true,
+        newEntriesCount: true,
+        sameEntriesCount: true,
+        partialPaymentsCount: true,
+        settledEntriesCount: true,
+        excludedCount: true,
+      },
+    });
+
+    const activeBatch = selectedBatchId
+      ? await prisma.importBatch.findUnique({
+          where: { id: selectedBatchId },
+          include: {
+            diffLogs: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        })
+      : await prisma.importBatch.findFirst({
+          where: { tenantId },
+          orderBy: { importedAt: 'desc' },
+          include: {
+            diffLogs: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        });
+
+    // Determine comparative prior batch (e.g. yesterday's export vs today's export)
+    let previousBatch: any = null;
+    if (activeBatch && recentBatches.length > 1) {
+      const activeIdx = recentBatches.findIndex((b) => b.id === activeBatch.id);
+      if (activeIdx >= 0 && activeIdx < recentBatches.length - 1) {
+        previousBatch = recentBatches[activeIdx + 1];
+      }
+    }
+
+    // Load customer master to check if new entries are missing contacts
+    const allCustomers = await prisma.customer.findMany({
+      where: { tenantId },
+      include: {
+        contacts: true,
+      },
+    });
+
+    const customerByLedgerMap = new Map<string, any>();
+    const customerByNameMap = new Map<string, any>();
+    for (const c of allCustomers) {
+      if (c.ledgerCode) {
+        customerByLedgerMap.set(c.ledgerCode.trim().toUpperCase(), c);
+      }
+      const normName = (c.partyName || c.rawLedgerName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (normName) {
+        customerByNameMap.set(normName, c);
+      }
+    }
+
+    const newBillNosSet = new Set<string>();
+    let newEntriesWithContactCount = 0;
+    let newEntriesMissingContactCount = 0;
+    let settledTotalAmount = 0;
+    let partialPaidTotalAmount = 0;
+
+    let enrichedDiffLogs: any[] = [];
+    if (activeBatch && activeBatch.diffLogs) {
+      enrichedDiffLogs = activeBatch.diffLogs.map((log: any) => {
+        let partyName = log.partyName;
+        let billNo = log.billNo;
+
+        let cust = null;
+        if (log.ledgerCode) {
+          cust = customerByLedgerMap.get(log.ledgerCode.trim().toUpperCase());
+        }
+        if (!cust && partyName) {
+          const normPName = partyName.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          cust = customerByNameMap.get(normPName);
+        }
+
+        const primaryContact = cust?.contacts?.find((c: any) => c.isPrimary) || cust?.contacts?.[0];
+        const hasContact = Boolean(
+          primaryContact && (primaryContact.mobileNumber || primaryContact.whatsappNumber || primaryContact.emailId)
+        );
+
+        const cleanBillNo = billNo ? billNo.trim().toUpperCase() : '';
+
+        if (log.diffType === 'NEW_ENTRY') {
+          if (cleanBillNo) newBillNosSet.add(cleanBillNo);
+          if (hasContact) newEntriesWithContactCount++;
+          else newEntriesMissingContactCount++;
+        } else if (log.diffType === 'SETTLED') {
+          settledTotalAmount += log.previousBalance || 0;
+        } else if (log.diffType === 'PARTIAL_PAYMENT') {
+          partialPaidTotalAmount += Math.max(0, (log.previousBalance || 0) - (log.currentBalance || 0));
+        }
+
+        return {
+          ...log,
+          partyName: partyName || cust?.partyName || cust?.rawLedgerName || (log.diffType === 'SETTLED' ? 'Cleared Customer' : 'Customer Account'),
+          billNo: billNo || 'Invoice',
+          customerId: cust?.id || null,
+          hasContact,
+          contactPerson: primaryContact?.personName || null,
+          contactPhone: primaryContact?.mobileNumber || primaryContact?.whatsappNumber || null,
+          contactEmail: primaryContact?.emailId || null,
+          isMissingContact: !hasContact,
+        };
+      });
+    }
+
+    const enrichedActiveBatch = activeBatch
+      ? {
+          ...activeBatch,
+          previousBatch,
+          newEntriesWithContactCount,
+          newEntriesMissingContactCount,
+          settledTotalAmount: Math.round(settledTotalAmount * 100) / 100,
+          partialPaidTotalAmount: Math.round(partialPaidTotalAmount * 100) / 100,
+          diffLogs: enrichedDiffLogs,
+        }
+      : null;
+
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
@@ -40,7 +172,14 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    if (filter === 'INTERNAL' || filter === 'MUTED' || filter === 'TDS') {
+    if (filter === 'NEW_TODAY' || filter === 'NEW_ENTRIES') {
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
+      whereClause.status = { notIn: ['Credit Note', 'Internal / Muted'] };
+      whereClause.actionType = { not: 'No Action' };
+      whereClause.outstandingAmount = { gt: 0 };
+      whereClause.billAmount = { gt: 0 };
+      whereClause.billNo = { in: Array.from(newBillNosSet) };
+    } else if (filter === 'INTERNAL' || filter === 'MUTED' || filter === 'TDS') {
       whereClause.OR = [
         { customer: { status: { in: ['EXCLUDED', 'INTERNAL_MUTED'] } } },
         { actionType: 'No Action' },
@@ -213,6 +352,8 @@ export async function GET(req: NextRequest) {
         ? Math.abs(inv.billAmount || inv.outstandingAmount || 0)
         : Math.max(inv.adjustment || 0, Math.round(((inv.billAmount || 0) - Math.max(0, inv.outstandingAmount || 0)) * 100) / 100);
 
+      const isNewToday = inv.billNo ? newBillNosSet.has(inv.billNo.trim().toUpperCase()) : false;
+
       return {
         ...inv,
         ...computeAging(inv.dueDate, now),
@@ -222,6 +363,7 @@ export async function GET(req: NextRequest) {
         isAdvancePayment,
         isTdsRecord,
         isInternalUtility,
+        isNewToday,
       };
     });
 
@@ -399,75 +541,6 @@ export async function GET(req: NextRequest) {
     internalMutedAmount = Math.round(internalMutedAmount * 100) / 100;
     creditNotesAmount = Math.round(creditNotesAmount * 100) / 100;
 
-    // Query Import Batches with Date and Time Stamp
-    const selectedBatchId = searchParams.get('batchId');
-
-    const recentBatches = await prisma.importBatch.findMany({
-      where: { tenantId },
-      orderBy: { importedAt: 'desc' },
-      take: 20,
-      select: {
-        id: true,
-        fileName: true,
-        importedAt: true,
-        rowCount: true,
-        newEntriesCount: true,
-        sameEntriesCount: true,
-        partialPaymentsCount: true,
-        settledEntriesCount: true,
-        excludedCount: true,
-      },
-    });
-
-    const activeBatch = selectedBatchId
-      ? await prisma.importBatch.findUnique({
-          where: { id: selectedBatchId },
-          include: {
-            diffLogs: {
-              orderBy: { createdAt: 'desc' },
-            },
-          },
-        })
-      : await prisma.importBatch.findFirst({
-          where: { tenantId },
-          orderBy: { importedAt: 'desc' },
-          include: {
-            diffLogs: {
-              orderBy: { createdAt: 'desc' },
-            },
-          },
-        });
-
-    // Enrich diffLogs with customer name and bill details if missing from legacy records
-    if (activeBatch && activeBatch.diffLogs) {
-      const billToInvoiceMap = new Map<string, any>();
-      for (const inv of allInvoices) {
-        if (inv.billNo) {
-          billToInvoiceMap.set(inv.billNo.toUpperCase().trim(), inv);
-        }
-      }
-
-      activeBatch.diffLogs = activeBatch.diffLogs.map((log: any) => {
-        let partyName = log.partyName;
-        let billNo = log.billNo;
-        if (!partyName || !billNo) {
-          // Attempt extraction from notes or bill map
-          for (const [bNo, inv] of billToInvoiceMap.entries()) {
-            if (log.notes && log.notes.toUpperCase().includes(bNo)) {
-              billNo = billNo || inv.billNo;
-              partyName = partyName || inv.customer?.partyName || inv.customer?.rawLedgerName;
-              break;
-            }
-          }
-        }
-        return {
-          ...log,
-          partyName: partyName || (log.diffType === 'SETTLED' ? 'Cleared Customer' : 'Customer Account'),
-          billNo: billNo || 'Invoice',
-        };
-      });
-    }
-
     return NextResponse.json({
       success: true,
       tenant: {
@@ -500,8 +573,13 @@ export async function GET(req: NextRequest) {
         creditNotesCount,
         totalCount: allInvoices.length,
         tradeInvoiceCount,
+        newTodayCount: newBillNosSet.size,
+        newEntriesWithContactCount,
+        newEntriesMissingContactCount,
+        settledTotalAmount: enrichedActiveBatch?.settledTotalAmount || 0,
+        partialPaidTotalAmount: enrichedActiveBatch?.partialPaidTotalAmount || 0,
       },
-      latestBatch: activeBatch,
+      latestBatch: enrichedActiveBatch,
       recentBatches,
       dues: invoices,
       invoices,

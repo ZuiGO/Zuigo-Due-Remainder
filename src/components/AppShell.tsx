@@ -166,7 +166,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* MAIN AREA */}
       <div className="flex-1 flex flex-col min-w-0 pl-[248px] min-h-screen">
-        <header className="sticky top-0 z-30 bg-white border-b border-[#e7ecef] px-[30px] min-h-[78px] py-2.5 flex items-center justify-between gap-5 shadow-[0_3px_12px_rgba(25,45,55,.04)]">
+        <header className="sticky top-0 z-30 bg-white border-b border-[#e7ecef] px-[30px] pr-8 sm:pr-10 min-h-[78px] py-2.5 flex items-center justify-between gap-5 shadow-[0_3px_12px_rgba(25,45,55,.04)]">
           <div>
             <div className="text-[11px] text-[#9aa3aa] mb-1">
               Payment Follow-up Automation <span className="mx-1">/</span> <span>{activeItem.label}</span>
@@ -198,7 +198,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <div className="flex-1">{children}</div>
+        <div className="flex-1 w-full">{children}</div>
       </div>
     </div>
   );

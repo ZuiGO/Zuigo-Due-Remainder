@@ -15,14 +15,30 @@ export async function POST(req: NextRequest) {
       emailId,
       preferredLanguage,
       isPrimary = true,
+      partyName,
+      ledgerCode,
     } = body;
 
-    if (!customerId) {
-      return NextResponse.json({ error: 'customerId is required' }, { status: 400 });
+    let targetCustomerId = customerId;
+    if (!targetCustomerId && (partyName || ledgerCode)) {
+      const found = await prisma.customer.findFirst({
+        where: {
+          OR: [
+            partyName ? { partyName: { equals: partyName, mode: 'insensitive' } } : undefined,
+            partyName ? { rawLedgerName: { equals: partyName, mode: 'insensitive' } } : undefined,
+            ledgerCode ? { ledgerCode: { equals: ledgerCode } } : undefined,
+          ].filter(Boolean) as any,
+        },
+      });
+      if (found) targetCustomerId = found.id;
+    }
+
+    if (!targetCustomerId) {
+      return NextResponse.json({ error: 'customerId or customer identifier is required' }, { status: 400 });
     }
 
     const customer = await prisma.customer.findUnique({
-      where: { id: customerId },
+      where: { id: targetCustomerId },
     });
 
     if (!customer) {
@@ -36,7 +52,7 @@ export async function POST(req: NextRequest) {
     // If marked primary, unset primary on other contacts for this customer
     if (isPrimary) {
       await prisma.customerContact.updateMany({
-        where: { customerId },
+        where: { customerId: targetCustomerId },
         data: { isPrimary: false },
       });
     }
@@ -57,7 +73,7 @@ export async function POST(req: NextRequest) {
     } else {
       contact = await prisma.customerContact.create({
         data: {
-          customerId,
+          customerId: targetCustomerId,
           personName: personName?.trim() || 'Accounts Department',
           designation: designation?.trim() || null,
           mobileNumber: formattedMobile || null,
@@ -70,13 +86,13 @@ export async function POST(req: NextRequest) {
 
     if (preferredLanguage) {
       await prisma.customer.update({
-        where: { id: customerId },
+        where: { id: targetCustomerId },
         data: { preferredLanguage },
       });
     }
 
     const updatedCustomer = await prisma.customer.findUnique({
-      where: { id: customerId },
+      where: { id: targetCustomerId },
       include: { contacts: true },
     });
 
