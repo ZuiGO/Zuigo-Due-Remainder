@@ -133,8 +133,27 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Process SAP Dues second
+    // Retrieve existing customer ledger map to resolve exports that omit Ledger Code
+    const existingCustomers = await prisma.customer.findMany({
+      where: { tenantId: tenant.id },
+      select: { ledgerCode: true, partyName: true, rawLedgerName: true },
+    });
+    const fallbackLedgerMap: Record<string, string> = {};
+    for (const c of existingCustomers) {
+      if (c.ledgerCode) {
+        if (c.partyName) {
+          fallbackLedgerMap[c.partyName.toLowerCase().trim()] = c.ledgerCode.trim();
+          fallbackLedgerMap[c.partyName.toLowerCase().trim().replace(/[^a-z0-9]/g, '')] = c.ledgerCode.trim();
+        }
+        if (c.rawLedgerName) {
+          fallbackLedgerMap[c.rawLedgerName.toLowerCase().trim()] = c.ledgerCode.trim();
+          fallbackLedgerMap[c.rawLedgerName.toLowerCase().trim().replace(/[^a-z0-9]/g, '')] = c.ledgerCode.trim();
+        }
+      }
+    }
+
     for (const df of duesFiles) {
-      const parsedBills = parseSapDuesExport(df.buffer);
+      const parsedBills = parseSapDuesExport(df.buffer, { fallbackLedgerMap });
       const res = await reconcileDailySapExport(tenant.id, df.name, parsedBills);
       diffSummary = res; // Keeps latest diff summary
     }

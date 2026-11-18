@@ -199,6 +199,11 @@ export async function reconcileDailySapExport(
         ? 'Partially Paid'
         : 'Pending';
 
+      // Calculate configured initial follow-up date (3 days before due date for upcoming bills)
+      const now = new Date();
+      const firstReminderDate = new Date(inv.dueDate.getTime() - 3 * 86400000);
+      const initialNextFollowUpDate = firstReminderDate > now ? firstReminderDate : now;
+
       const createdBill = await prisma.invoice.create({
         data: {
           tenantId,
@@ -217,6 +222,7 @@ export async function reconcileDailySapExport(
           priority: isExcludedAccount ? 'Low' : inv.priority,
           status: initialStatus,
           narration: inv.narration,
+          nextFollowUpDate: isExcludedAccount || inv.outstandingAmount <= 0 ? null : initialNextFollowUpDate,
         },
       });
 
@@ -276,6 +282,7 @@ export async function reconcileDailySapExport(
             priority: 'Low',
             actionType: 'No Action',
             status: 'Closed',
+            nextFollowUpDate: null,
             manualOverride: false,
           },
         });
@@ -413,6 +420,7 @@ export async function reconcileDailySapExport(
           adjustment: b.billAmount > 0 ? b.billAmount : b.adjustment,
           status: 'Closed',
           actionType: 'No Action',
+          nextFollowUpDate: null,
           manualOverride: false,
         },
       });

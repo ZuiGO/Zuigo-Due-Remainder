@@ -187,12 +187,12 @@ export async function executeTenantDigestRun(
 
       // 2. Check if customer is due for reminder today:
       // If approvedCustomerIds or force is true, proceed.
-      // Otherwise, at least ONE bill must have reached its follow-up date (nextFollowUpDate == null || <= now).
-      const isDueToday = force ||
-        Boolean(approvedCustomerIds && approvedCustomerIds.length > 0) ||
-        eligibleBills.some(i => i.nextFollowUpDate == null || new Date(i.nextFollowUpDate) <= now);
+      // Otherwise, at least ONE bill must have reached its configured follow-up date (nextFollowUpDate <= now).
+      const billsToInclude = (force || Boolean(approvedCustomerIds && approvedCustomerIds.length > 0))
+        ? eligibleBills
+        : eligibleBills.filter(i => (i.nextFollowUpDate ? new Date(i.nextFollowUpDate) <= now : new Date(i.dueDate.getTime() - 3 * 86400000) <= now));
 
-      if (!isDueToday) continue; // Cadence hold: customer is not due for reminder today
+      if (billsToInclude.length === 0) continue; // Cadence hold: customer has no bills due on cadence today
 
       const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
       // STRICT REQUIREMENT: Under no circumstances should reminders be sent without a registered contact!
@@ -206,7 +206,7 @@ export async function executeTenantDigestRun(
       const customerName = customer.partyName || customer.rawLedgerName;
       const language = customer.preferredLanguage || 'English';
 
-      const digestItems: DigestItem[] = eligibleBills.map(i => ({
+      const digestItems: DigestItem[] = billsToInclude.map(i => ({
         billNo: i.billNo,
         billAmount: i.billAmount,
         outstandingAmount: i.outstandingAmount,
@@ -320,14 +320,14 @@ export async function executeTenantDigestRun(
         }
       }
 
-      // Update bill followup dates based on highest priority
-      const hasHigh = eligibleBills.some(i => i.priority === 'High');
-      const hasMedium = eligibleBills.some(i => i.priority === 'Medium');
+      // Update bill followup dates based on highest priority among dispatched bills
+      const hasHigh = billsToInclude.some(i => i.priority === 'High');
+      const hasMedium = billsToInclude.some(i => i.priority === 'Medium');
       const cadenceDays = hasHigh ? 3 : hasMedium ? 7 : 14;
 
       const nextFollowup = new Date(now.getTime() + cadenceDays * 86400000);
 
-      for (const inv of eligibleBills) {
+      for (const inv of billsToInclude) {
         await prisma.invoice.update({
           where: { id: inv.id },
           data: {
@@ -468,16 +468,18 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
 
     if (eligibleBills.length === 0) continue;
 
-    // Must have at least one bill due today (null nextFollowUpDate or reached cadence)
-    const isDueToday = eligibleBills.some(i => i.nextFollowUpDate == null || new Date(i.nextFollowUpDate) <= now);
-    if (!isDueToday) continue;
+    // In approval queue preview, show bills that are due on configured dates (nextFollowUpDate <= now)
+    const billsDueOnCadence = eligibleBills.filter(
+      i => (i.nextFollowUpDate ? new Date(i.nextFollowUpDate) <= now : new Date(i.dueDate.getTime() - 3 * 86400000) <= now)
+    );
+    if (billsDueOnCadence.length === 0) continue;
 
     const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
     const contactPerson = primaryContact?.personName || 'Sir / Madam';
     const customerName = customer.partyName || customer.rawLedgerName;
     const language = customer.preferredLanguage || 'English';
 
-    const digestItems: DigestItem[] = eligibleBills.map(i => ({
+    const digestItems: DigestItem[] = billsDueOnCadence.map(i => ({
       billNo: i.billNo,
       billAmount: i.billAmount,
       outstandingAmount: i.outstandingAmount,

@@ -339,11 +339,18 @@ export function getRowVal(row: any, candidateKeys: string[]): any {
   return undefined;
 }
 
+export interface ParseSapDuesOptions {
+  fallbackLedgerMap?: Record<string, string>;
+}
+
 /**
  * Parses SAP Dues Export (Outstanding Receivable) from HTML ALV, XLSX, or CSV.
  * Automatically skips company letterhead and discards Grand Total.
  */
-export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill[] {
+export function parseSapDuesExport(
+  bufferOrText: Buffer | string,
+  options?: ParseSapDuesOptions
+): ParsedSapBill[] {
   const buffer = typeof bufferOrText === 'string' ? Buffer.from(bufferOrText) : bufferOrText;
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -352,13 +359,13 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
   const now = new Date();
   const parsedBills: ParsedSapBill[] = [];
 
-  // Reject files missing the mandatory 'Ledger Code' column
+  // Reject files missing the mandatory 'Ledger Code' column unless customer contacts map is supplied
   const candidateLedgerKeys = ['Ledger Code', 'ledger_code', 'LedgerCode', 'Ledger', 'Account Code'];
   const hasLedgerCodeColumn = rawRows.some(row => {
     return candidateLedgerKeys.some(k => getRowVal(row, [k]) !== undefined);
   });
 
-  if (!hasLedgerCodeColumn) {
+  if (!hasLedgerCodeColumn && (!options?.fallbackLedgerMap || Object.keys(options.fallbackLedgerMap).length === 0)) {
     throw new Error(
       "Missing required column: 'Ledger Code'. The uploaded Excel file must contain a 'Ledger Code' column to ensure accurate customer mapping and prevent mismatched dues."
     );
@@ -371,6 +378,22 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
     let rawLedger = String(
       getRowVal(row, ['Ledger Code', 'ledger_code', 'LedgerCode', 'Ledger', 'Account Code']) || ''
     ).trim();
+
+    // If Ledger Code column was missing in export, attempt resolution from Customer Contacts Master
+    if (!rawLedger && options?.fallbackLedgerMap && rawParty && !/grand\s*total/i.test(rawParty)) {
+      const cleanParty = rawParty.toLowerCase().trim();
+      const cleanAlpha = cleanParty.replace(/[^a-z0-9]/g, '');
+      rawLedger =
+        options.fallbackLedgerMap[cleanParty] ||
+        options.fallbackLedgerMap[cleanAlpha] ||
+        '';
+
+      if (!rawLedger) {
+        throw new Error(
+          `Missing required column: 'Ledger Code'. Customer '${rawParty}' could not be matched in your Customer Contacts Master. Please ensure 'Ledger Code' is in the Excel file or maintain this customer in Contacts first.`
+        );
+      }
+    }
 
     // Discard Grand Total or empty rows
     if (!rawLedger || /grand\s*total/i.test(rawLedger) || /grand\s*total/i.test(rawParty)) {

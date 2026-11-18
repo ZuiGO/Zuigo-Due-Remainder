@@ -151,7 +151,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
         smtpHost = 'smtp.gmail.com';
       }
 
-      if (provider === 'SMTP' && smtpHost && config.user && config.pass) {
+      if (!isSandbox && provider === 'SMTP' && smtpHost && config.user && config.pass) {
         const portNum = Number(config.port) || 587;
         const isSecure = config.secure !== undefined ? Boolean(config.secure) : portNum === 465;
 
@@ -211,7 +211,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
         };
       }
 
-      if (provider === 'RESEND' && config.apiKey) {
+      if (!isSandbox && provider === 'RESEND' && config.apiKey) {
         const res = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
