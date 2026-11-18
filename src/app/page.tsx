@@ -1056,9 +1056,9 @@ export default function DashboardPage() {
                     +{latestBatch.newEntriesCount} New Bills Added Today
                   </span>
                 )}
-                {latestBatch.newEntriesMissingContactCount > 0 && (
+                {(latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount) > 0 && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
-                    <AlertTriangle className="w-3 h-3 text-rose-600" /> {latestBatch.newEntriesMissingContactCount} Missing Contact Details
+                    <AlertTriangle className="w-3 h-3 text-rose-600" /> {latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount} Missing Contact Details
                   </span>
                 )}
               </div>
@@ -1133,8 +1133,8 @@ export default function DashboardPage() {
               </div>
               <div className="text-[10px] text-slate-500 mt-1 flex items-center justify-between">
                 <span>
-                  {latestBatch.newEntriesMissingContactCount > 0 ? (
-                    <span className="text-rose-600 font-bold">⚠️ {latestBatch.newEntriesMissingContactCount} missing contact</span>
+                  {(latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount) > 0 ? (
+                    <span className="text-rose-600 font-bold">⚠️ {latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount} missing contact</span>
                   ) : (
                     <span className="text-emerald-600 font-semibold">✓ All contacts ready</span>
                   )}
@@ -1227,7 +1227,7 @@ export default function DashboardPage() {
                   {[
                     { id: 'ALL', label: 'All Reconciliation Events', count: latestBatch.diffLogs?.length || 0 },
                     { id: 'NEW', label: '✨ New Bills Added', count: latestBatch.newEntriesCount },
-                    { id: 'MISSING_CONTACT', label: '⚠️ Missing Contacts Alert', count: latestBatch.newEntriesMissingContactCount, alert: true },
+                    { id: 'MISSING_CONTACT', label: '⚠️ Missing Contacts Alert', count: latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount, alert: true },
                     { id: 'SETTLED', label: '✓ Settled / Cleared', count: latestBatch.settledEntriesCount },
                     { id: 'PARTIAL', label: '📉 Partial Payments', count: latestBatch.partialPaymentsCount },
                     { id: 'SAME', label: '⚪ Continuing Unchanged', count: latestBatch.sameEntriesCount },
@@ -1274,7 +1274,7 @@ export default function DashboardPage() {
               {(() => {
                 const logs = (latestBatch.diffLogs || []).filter((log: any) => {
                   if (diffSubFilter === 'NEW') return log.diffType === 'NEW_ENTRY';
-                  if (diffSubFilter === 'MISSING_CONTACT') return log.diffType === 'NEW_ENTRY' && log.isMissingContact;
+                  if (diffSubFilter === 'MISSING_CONTACT') return log.isMissingContact && log.diffType !== 'SETTLED';
                   if (diffSubFilter === 'SETTLED') return log.diffType === 'SETTLED';
                   if (diffSubFilter === 'PARTIAL') return log.diffType === 'PARTIAL_PAYMENT';
                   if (diffSubFilter === 'SAME') return log.diffType === 'SAME_ENTRY';

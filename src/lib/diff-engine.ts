@@ -186,6 +186,28 @@ export async function reconcileDailySapExport(
       },
     });
 
+    // Auto-inherit contacts if this customer has no contacts, but another customer record with matching party name has contacts
+    if (existingCustomer && existingCustomer.id !== customer.id) {
+      const currentContactsCount = await prisma.customerContact.count({ where: { customerId: customer.id } });
+      if (currentContactsCount === 0) {
+        const existingContacts = await prisma.customerContact.findMany({ where: { customerId: existingCustomer.id } });
+        for (const ec of existingContacts) {
+          await prisma.customerContact.create({
+            data: {
+              customerId: customer.id,
+              personName: ec.personName,
+              designation: ec.designation,
+              mobileNumber: ec.mobileNumber,
+              whatsappNumber: ec.whatsappNumber,
+              emailId: ec.emailId,
+              isPrimary: ec.isPrimary,
+              isActive: ec.isActive,
+            },
+          });
+        }
+      }
+    }
+
     if (!existing) {
       // A. NEW ENTRY TODAY
       newEntriesCount++;

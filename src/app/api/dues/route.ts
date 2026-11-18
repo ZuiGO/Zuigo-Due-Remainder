@@ -137,12 +137,58 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // Identify all active trade customer accounts in system with missing contacts
+    const activeCustomersWithMissingContacts = allCustomers.filter((c) => {
+      if (c.status === 'EXCLUDED' || c.status === 'INTERNAL_MUTED') return false;
+      if (isNonTradeOrExcludedAccount(c.partyName || c.rawLedgerName || '')) return false;
+      if (isInternalOrPaidByCompany(c.partyName || c.rawLedgerName || '')) return false;
+      const hasCt = c.contacts && c.contacts.length > 0 && c.contacts.some((ct: any) => Boolean(ct.mobileNumber?.trim() || ct.whatsappNumber?.trim() || ct.emailId?.trim()));
+      return !hasCt;
+    });
+    const customerMissingContactCount = activeCustomersWithMissingContacts.length;
+
+    // Count diff log items with missing contacts (excluding already settled bills)
+    const diffMissingContactItems = enrichedDiffLogs.filter((log) => log.isMissingContact && log.diffType !== 'SETTLED');
+    const diffMissingContactCount = diffMissingContactItems.length;
+
+    // Overall missing contact alerts reflects any diff entry OR customer contact directory gap
+    const missingContactAlertsCount = Math.max(diffMissingContactCount, customerMissingContactCount, newEntriesMissingContactCount);
+
+    // If an active customer is missing contacts but not in the latest diff logs, prepend a notification entry
+    const loggedCustomerIds = new Set(enrichedDiffLogs.map((l) => l.customerId).filter(Boolean));
+    for (const mc of activeCustomersWithMissingContacts) {
+      if (!loggedCustomerIds.has(mc.id)) {
+        enrichedDiffLogs.unshift({
+          id: `missing-ct-${mc.id}`,
+          batchId: activeBatch?.id || 'current',
+          invoiceId: null,
+          partyName: mc.partyName || mc.rawLedgerName,
+          ledgerCode: mc.ledgerCode,
+          billNo: 'Customer Account',
+          diffType: 'SAME_ENTRY',
+          previousBalance: mc.totalOutstanding || 0,
+          currentBalance: mc.totalOutstanding || 0,
+          notes: 'Customer registered without phone number or email. Payment reminders are blocked.',
+          createdAt: new Date(),
+          customerId: mc.id,
+          hasContact: false,
+          contactPerson: null,
+          contactPhone: null,
+          contactEmail: null,
+          isMissingContact: true,
+        });
+      }
+    }
+
     const enrichedActiveBatch = activeBatch
       ? {
           ...activeBatch,
           previousBatch,
           newEntriesWithContactCount,
-          newEntriesMissingContactCount,
+          newEntriesMissingContactCount: missingContactAlertsCount,
+          missingContactAlertsCount,
+          missingContactsCount: missingContactAlertsCount,
+          customerMissingContactCount,
           settledTotalAmount: Math.round(settledTotalAmount * 100) / 100,
           partialPaidTotalAmount: Math.round(partialPaidTotalAmount * 100) / 100,
           diffLogs: enrichedDiffLogs,

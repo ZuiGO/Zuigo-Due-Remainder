@@ -13,6 +13,7 @@ import {
   LogOut,
   ExternalLink,
 } from 'lucide-react';
+import NotificationBell from './NotificationBell';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, title: 'Dashboard & Receivables Overview' },
@@ -174,9 +175,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="font-display font-semibold text-[18px] tracking-tight text-[#3A3A3A]">{activeItem.title}</div>
           </div>
 
-          <div className="flex items-center gap-5">
-            <div className="flex items-center gap-2.5">
-              <div className="w-[35px] h-[35px] rounded-full bg-[#dff6f7] text-[#087f87] font-bold flex items-center justify-center text-xs">
+          <div className="flex items-center gap-4">
+            {/* Bell Icon Notification Center */}
+            <NotificationBell />
+
+            {/* Profile Avatar & Info */}
+            <div className="flex items-center gap-2.5 pl-3 border-l border-[#e5eaed]">
+              <div className="w-[35px] h-[35px] rounded-full bg-[#dff6f7] text-[#087f87] font-bold flex items-center justify-center text-xs shadow-2xs">
                 {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'A'}
               </div>
               <div className="hidden lg:block text-left">
