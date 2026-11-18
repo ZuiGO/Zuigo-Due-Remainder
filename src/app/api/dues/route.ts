@@ -219,6 +219,7 @@ export async function GET(req: NextRequest) {
       } else if (filter === 'SETTLED') {
         whereClause.billAmount = { gt: 0 };
         whereClause.outstandingAmount = 0;
+        delete whereClause.status;
         whereClause.OR = [
           { status: 'Settled' },
           { status: 'Payment Received' },
@@ -298,6 +299,20 @@ export async function GET(req: NextRequest) {
           isAdvanceOrCreditBillNo(inv.billNo);
         return isCreditOrAdv;
       });
+    } else if (filter === 'SETTLED') {
+      filteredInvoices = rawInvoices.filter((inv: any) => {
+        const isInternal =
+          inv.customer?.status === 'EXCLUDED' ||
+          inv.customer?.status === 'INTERNAL_MUTED' ||
+          isNonTradeOrExcludedAccount(inv.customer?.rawLedgerName || inv.customer?.partyName || '') ||
+          isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) ||
+          inv.status === 'Internal / Muted';
+
+        const isAdvance = isAdvanceOrCreditBillNo(inv.billNo) || /advance/i.test(inv.narration || '');
+        const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
+
+        return !isInternal && !isAdvance && !isCreditNote && inv.billAmount > 0;
+      });
     } else if (filter !== 'ALL_LEDGER') {
       // Strictly exclude any internal/utility bills, TDS, and credit/advance balances from all standard dues views
       filteredInvoices = rawInvoices.filter((inv: any) => {
@@ -314,6 +329,27 @@ export async function GET(req: NextRequest) {
 
         return !isInternal && !isAdvance && !isCreditNote;
       });
+    }
+
+    // Historical settled diff logs lookup: identifies exactly which SAP Excel import file cleared each bill
+    const settledDiffLogs = await prisma.dailyDiffLog.findMany({
+      where: { diffType: 'SETTLED' },
+      include: { batch: { select: { fileName: true, importedAt: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const settledBatchByBillNo = new Map<string, { fileName: string; settledAt: Date; amount: number }>();
+    for (const sLog of settledDiffLogs) {
+      if (sLog.billNo) {
+        const k = sLog.billNo.trim().toUpperCase();
+        if (!settledBatchByBillNo.has(k)) {
+          settledBatchByBillNo.set(k, {
+            fileName: sLog.batch?.fileName || 'SAP Diff Reconciliation',
+            settledAt: sLog.createdAt || sLog.batch?.importedAt || new Date(),
+            amount: sLog.previousBalance || 0,
+          });
+        }
+      }
     }
 
     // daysOverdue / agingBucket stored at import time go stale the next day: always recompute from dueDate.
@@ -354,6 +390,29 @@ export async function GET(req: NextRequest) {
 
       const isNewToday = inv.billNo ? newBillNosSet.has(inv.billNo.trim().toUpperCase()) : false;
 
+      // Track which Excel import file settled this bill
+      const settledInfo = settledBatchByBillNo.get(inv.billNo?.trim().toUpperCase());
+      const settledInFileName = inv.settledInFileName || settledInfo?.fileName || (isSettled ? (activeBatch?.fileName || 'SAP Reconciled') : null);
+      const settledAt = inv.settledAt || settledInfo?.settledAt || null;
+
+      // Contact Resolution: Invoice-specific contact has highest priority; falls back to company-level contact
+      const hasInvoiceSpecificContact = Boolean(inv.contactPhone || inv.contactEmail || inv.contactPerson);
+      const invoiceContact = hasInvoiceSpecificContact ? {
+        personName: inv.contactPerson || 'Accounts Department',
+        mobileNumber: inv.contactPhone,
+        whatsappNumber: inv.contactPhone,
+        emailId: inv.contactEmail,
+        designation: inv.contactDesignation,
+        isInvoiceSpecific: true,
+      } : null;
+
+      const customerPrimaryContact = inv.customer?.contacts?.find((c: any) => c.isPrimary) || inv.customer?.contacts?.[0] || null;
+
+      const effectiveContact = invoiceContact || customerPrimaryContact;
+      const hasEffectiveContact = Boolean(
+        effectiveContact && (effectiveContact.mobileNumber || effectiveContact.whatsappNumber || effectiveContact.emailId)
+      );
+
       return {
         ...inv,
         ...computeAging(inv.dueDate, now),
@@ -364,6 +423,11 @@ export async function GET(req: NextRequest) {
         isTdsRecord,
         isInternalUtility,
         isNewToday,
+        settledInFileName,
+        settledAt,
+        invoiceContact,
+        effectiveContact,
+        hasEffectiveContact,
       };
     });
 

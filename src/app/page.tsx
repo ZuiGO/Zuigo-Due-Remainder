@@ -106,9 +106,11 @@ export default function DashboardPage() {
   const [diffExpanded, setDiffExpanded] = useState(true);
   const [diffSubFilter, setDiffSubFilter] = useState<'ALL' | 'NEW' | 'MISSING_CONTACT' | 'SETTLED' | 'PARTIAL' | 'SAME'>('ALL');
 
-  // Quick Add Contact Modal State
+  // Quick Add / Edit Contact Modal State (supports invoice-specific contact assignment)
   const [addContactModal, setAddContactModal] = useState<{
     isOpen: boolean;
+    invoiceId: string | null;
+    billNo: string | null;
     customerId: string | null;
     partyName: string;
     ledgerCode: string;
@@ -116,10 +118,13 @@ export default function DashboardPage() {
     mobileNumber: string;
     emailId: string;
     designation: string;
+    updateCustomerDefault: boolean;
     submitting: boolean;
     error: string | null;
   }>({
     isOpen: false,
+    invoiceId: null,
+    billNo: null,
     customerId: null,
     partyName: '',
     ledgerCode: '',
@@ -127,6 +132,7 @@ export default function DashboardPage() {
     mobileNumber: '+91 8530383141',
     emailId: 'jayesh@zuigo.ai',
     designation: 'Accounts Manager',
+    updateCustomerDefault: true,
     submitting: false,
     error: null,
   });
@@ -136,17 +142,24 @@ export default function DashboardPage() {
     partyName: string,
     ledgerCode?: string,
     currentPhone?: string,
-    currentEmail?: string
+    currentEmail?: string,
+    invoiceId?: string,
+    billNo?: string,
+    currentPerson?: string,
+    currentDesignation?: string
   ) => {
     setAddContactModal({
       isOpen: true,
+      invoiceId: invoiceId || null,
+      billNo: billNo || null,
       customerId,
       partyName,
       ledgerCode: ledgerCode || '',
-      personName: 'Accounts',
+      personName: currentPerson || 'Accounts',
       mobileNumber: currentPhone || '+91 8530383141',
       emailId: currentEmail || 'jayesh@zuigo.ai',
-      designation: 'Accounts Manager',
+      designation: currentDesignation || 'Accounts Manager',
+      updateCustomerDefault: !invoiceId,
       submitting: false,
       error: null,
     });
@@ -156,6 +169,36 @@ export default function DashboardPage() {
     e.preventDefault();
     try {
       setAddContactModal((prev) => ({ ...prev, submitting: true, error: null }));
+
+      if (addContactModal.invoiceId || addContactModal.billNo) {
+        // Dedicated invoice-level contact assignment
+        const res = await fetch('/api/invoices/contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            invoiceId: addContactModal.invoiceId,
+            billNo: addContactModal.billNo,
+            personName: addContactModal.personName?.trim() || 'Accounts',
+            mobileNumber: addContactModal.mobileNumber?.trim() || '+91 8530383141',
+            whatsappNumber: addContactModal.mobileNumber?.trim() || '+91 8530383141',
+            emailId: addContactModal.emailId?.trim() || 'jayesh@zuigo.ai',
+            designation: addContactModal.designation?.trim() || 'Accounts Manager',
+            updateCustomerDefault: addContactModal.updateCustomerDefault,
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAddContactModal((prev) => ({ ...prev, isOpen: false, submitting: false }));
+          setActionMessage(`✓ Dedicated contact saved for Invoice ${addContactModal.billNo || ''} (${addContactModal.partyName})!`);
+          fetchDashboardData();
+          setTimeout(() => setActionMessage(null), 5000);
+          return;
+        } else {
+          setAddContactModal((prev) => ({ ...prev, submitting: false, error: data.error || 'Failed to save contact' }));
+          return;
+        }
+      }
+
       const res = await fetch('/api/customers/contacts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1626,17 +1669,79 @@ export default function DashboardPage() {
                               )}
                             </div>
                             <div className="text-[10px] text-slate-500 mt-0.5">
-                              {hasContactInfo ? (
-                                <span>
-                                  {primaryContact?.personName || 'Accounts'} • {primaryContact?.mobileNumber || primaryContact?.whatsappNumber || primaryContact?.emailId}
-                                </span>
+                              {inv.invoiceContact ? (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
+                                    Bill Contact
+                                  </span>
+                                  <span className="font-semibold text-slate-800">
+                                    {inv.invoiceContact.personName}
+                                  </span>
+                                  <span>•</span>
+                                  <span>{inv.invoiceContact.mobileNumber || inv.invoiceContact.emailId}</span>
+                                  <button
+                                    onClick={() =>
+                                      handleOpenAddContact(
+                                        inv.customerId,
+                                        inv.customer?.partyName || inv.customer?.rawLedgerName,
+                                        inv.customer?.ledgerCode,
+                                        inv.invoiceContact.mobileNumber,
+                                        inv.invoiceContact.emailId,
+                                        inv.id,
+                                        inv.billNo,
+                                        inv.invoiceContact.personName,
+                                        inv.invoiceContact.designation
+                                      )
+                                    }
+                                    title="Edit contact for this specific invoice"
+                                    className="text-[10px] text-[#09AEB8] hover:underline font-bold"
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
+                              ) : inv.effectiveContact && (inv.effectiveContact.mobileNumber || inv.effectiveContact.emailId) ? (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[9px] text-slate-400 font-medium">Company Contact:</span>
+                                  <span>
+                                    {inv.effectiveContact.personName || 'Accounts'} • {inv.effectiveContact.mobileNumber || inv.effectiveContact.emailId}
+                                  </span>
+                                  <button
+                                    onClick={() =>
+                                      handleOpenAddContact(
+                                        inv.customerId,
+                                        inv.customer?.partyName || inv.customer?.rawLedgerName,
+                                        inv.customer?.ledgerCode,
+                                        inv.effectiveContact.mobileNumber,
+                                        inv.effectiveContact.emailId,
+                                        inv.id,
+                                        inv.billNo,
+                                        inv.effectiveContact.personName,
+                                        inv.effectiveContact.designation
+                                      )
+                                    }
+                                    title="Assign specific contact for this invoice"
+                                    className="text-[10px] text-[#09AEB8] hover:underline font-bold"
+                                  >
+                                    + Assign Bill Contact
+                                  </button>
+                                </div>
                               ) : (
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                                     <AlertTriangle className="w-2.5 h-2.5 text-amber-600" /> No direct contact
                                   </span>
                                   <button
-                                    onClick={() => handleOpenAddContact(inv.customerId, inv.customer?.partyName || inv.customer?.rawLedgerName, inv.customer?.ledgerCode)}
+                                    onClick={() =>
+                                      handleOpenAddContact(
+                                        inv.customerId,
+                                        inv.customer?.partyName || inv.customer?.rawLedgerName,
+                                        inv.customer?.ledgerCode,
+                                        undefined,
+                                        undefined,
+                                        inv.id,
+                                        inv.billNo
+                                      )
+                                    }
                                     className="text-[10px] text-[#09AEB8] hover:text-[#078d96] font-bold underline"
                                   >
                                     + Add Contact
@@ -1661,6 +1766,12 @@ export default function DashboardPage() {
                         <div className="text-[11px] text-slate-400">
                           {new Date(inv.billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                         </div>
+                        {inv.isSettled && inv.settledInFileName && (
+                          <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <span>Settled in: {inv.settledInFileName}</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Bill Amount */}
@@ -1791,6 +1902,15 @@ export default function DashboardPage() {
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 inline-block">
                             Internal Utility (Paid)
                           </span>
+                        ) : inv.isSettled ? (
+                          <div>
+                            <span className="status-pill status-paid">Settled / Closed</span>
+                            {inv.settledInFileName && (
+                              <div className="text-[10px] text-teal-700 font-bold mt-1">
+                                via {inv.settledInFileName}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className={`status-pill ${
                             inv.status === 'Payment Received' || inv.status === 'Settled' || inv.status === 'Closed'
@@ -1808,7 +1928,18 @@ export default function DashboardPage() {
 
                       {/* Actions */}
                       <td className="py-3.5 pr-6 pl-4 text-right">
-                        {isAdvance ? (
+                        {inv.isSettled ? (
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[11px] font-bold text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200 inline-flex items-center gap-1 shadow-2xs">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" /> Settled in {inv.settledInFileName || 'SAP Excel'}
+                            </span>
+                            {inv.settledAt && (
+                              <span className="text-[10px] text-slate-400">
+                                Reconciled on {new Date(inv.settledAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </span>
+                            )}
+                          </div>
+                        ) : isAdvance ? (
                           <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 inline-block">
                             Advance Paid
                           </span>
@@ -2705,8 +2836,14 @@ export default function DashboardPage() {
                   <Phone className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-slate-900">Add Customer Contact Details</h3>
-                  <p className="text-[11px] text-slate-500">Enable automatic and manual payment reminders</p>
+                  <h3 className="font-bold text-base text-slate-900">
+                    {addContactModal.billNo ? `Set Contact for Bill ${addContactModal.billNo}` : 'Add Customer Contact Details'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {addContactModal.billNo
+                      ? `Dedicated recipient for this invoice (${addContactModal.partyName})`
+                      : 'Enable automatic and manual payment reminders'}
+                  </p>
                 </div>
               </div>
               <button
@@ -2718,21 +2855,44 @@ export default function DashboardPage() {
             </div>
 
             <form onSubmit={handleSaveContact} className="space-y-3.5 text-xs">
+              {addContactModal.billNo && (
+                <div>
+                  <label className="block text-slate-500 font-medium mb-1">Specific Invoice / Bill No</label>
+                  <div className="p-2 rounded-xl bg-teal-50 border border-teal-200 font-mono font-bold text-teal-900 text-xs flex items-center justify-between">
+                    <span>{addContactModal.billNo}</span>
+                    <span className="text-[9px] uppercase font-bold bg-teal-200/60 px-2 py-0.5 rounded text-teal-800">
+                      Invoice-Specific Contact
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="block text-slate-500 font-medium mb-1">Customer Party Name</label>
+                <label className="block text-slate-500 font-medium mb-1">Customer Company / Party Name</label>
                 <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-semibold text-slate-800">
                   {addContactModal.partyName}
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-700 font-medium mb-1">Contact Person / Department</label>
+                <label className="block text-slate-700 font-medium mb-1">Contact Person Name</label>
                 <input
                   type="text"
                   value={addContactModal.personName}
                   onChange={(e) => setAddContactModal((prev) => ({ ...prev, personName: e.target.value }))}
                   required
                   placeholder="e.g. Accounts Department or Manager Name"
+                  className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Designation / Role</label>
+                <input
+                  type="text"
+                  value={addContactModal.designation}
+                  onChange={(e) => setAddContactModal((prev) => ({ ...prev, designation: e.target.value }))}
+                  placeholder="e.g. Accounts Manager, Project Lead, Site Engineer"
                   className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8]"
                 />
               </div>
@@ -2769,6 +2929,18 @@ export default function DashboardPage() {
                 <p className="text-[10px] text-slate-400 mt-1">Pre-filled with your designated notification email (jayesh@zuigo.ai).</p>
               </div>
 
+              {addContactModal.billNo && (
+                <label className="flex items-center gap-2 cursor-pointer pt-1 text-slate-600 select-none">
+                  <input
+                    type="checkbox"
+                    checked={addContactModal.updateCustomerDefault}
+                    onChange={(e) => setAddContactModal((prev) => ({ ...prev, updateCustomerDefault: e.target.checked }))}
+                    className="w-4 h-4 rounded text-[#09AEB8] focus:ring-[#09AEB8] border-slate-300 cursor-pointer"
+                  />
+                  <span>Also update company-level default contact</span>
+                </label>
+              )}
+
               {addContactModal.error && (
                 <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
                   {addContactModal.error}
@@ -2789,7 +2961,13 @@ export default function DashboardPage() {
                   className="px-4 py-2 rounded-xl bg-[#09AEB8] text-white font-bold hover:brightness-95 transition shadow-2xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <Check className="w-4 h-4" />
-                  {addContactModal.submitting ? 'Saving Contact...' : 'Save & Enable Reminders'}
+                  {addContactModal.billNo
+                    ? addContactModal.submitting
+                      ? 'Saving Invoice Contact...'
+                      : 'Save Invoice Contact'
+                    : addContactModal.submitting
+                    ? 'Saving Contact...'
+                    : 'Save & Enable Reminders'}
                 </button>
               </div>
             </form>

@@ -284,6 +284,8 @@ export async function reconcileDailySapExport(
             status: 'Closed',
             nextFollowUpDate: null,
             manualOverride: false,
+            settledInFileName: fileName,
+            settledAt: new Date(),
           },
         });
 
@@ -294,7 +296,7 @@ export async function reconcileDailySapExport(
           partyName: inv.partyName,
           previousBalance: oldBal,
           currentBalance: 0,
-          notes: `Bill fully settled in SAP (cleared ₹${paidDifference.toLocaleString('en-IN')}).`,
+          notes: `Bill fully settled in SAP (${fileName}, cleared ₹${paidDifference.toLocaleString('en-IN')}).`,
         });
       } else if (newBal < oldBal && oldBal > 0) {
         // B2. PARTIAL PAYMENT DETECTED IN SAP
@@ -307,7 +309,7 @@ export async function reconcileDailySapExport(
             invoiceId: existing.id,
             amountPaid: paidDifference,
             paymentMode: 'SAP_DIFF_DETECTED',
-            notes: `Auto-reconciled: balance reduced from ₹${oldBal.toLocaleString('en-IN')} to ₹${newBal.toLocaleString('en-IN')} in SAP`,
+            notes: `Auto-reconciled: balance reduced from ₹${oldBal.toLocaleString('en-IN')} to ₹${newBal.toLocaleString('en-IN')} in SAP (${fileName})`,
           },
         });
 
@@ -331,38 +333,45 @@ export async function reconcileDailySapExport(
           partyName: inv.partyName,
           previousBalance: oldBal,
           currentBalance: newBal,
-          notes: `Partial payment of ₹${paidDifference.toLocaleString('en-IN')} auto-detected. Remaining: ₹${newBal.toLocaleString('en-IN')}`,
+          notes: `Partial payment of ₹${paidDifference.toLocaleString('en-IN')} auto-detected in ${fileName}. Remaining: ₹${newBal.toLocaleString('en-IN')}`,
         });
       } else {
         // C. SAME / PERSISTENT ENTRY
         sameEntriesCount++;
 
-        // 7-day Grace Period check for manually marked paid bills
+        // Official SAP Excel export is the authoritative ledger of truth:
+        // If a user marked an invoice settled or partially paid, but the incoming SAP Excel sheet
+        // still lists an open outstanding balance (newBal > 0), revert the manual mark and restore
+        // the active balance strictly according to the new Excel sheet.
+        const wasManuallyMarked =
+          existing.manualOverride ||
+          existing.status === 'Closed' ||
+          existing.status === 'Payment Received' ||
+          existing.status === 'Payment Received - Pending SAP Confirmation';
+
         let billStatus = existing.status;
-        let diffNotes = newBal > oldBal
-          ? `Balance increased from ₹${oldBal.toLocaleString('en-IN')} to ₹${newBal.toLocaleString('en-IN')} in SAP.`
-          : `Unchanged bill still pending. Aging updated: ${inv.daysOverdue} days overdue.`;
+        let diffNotes = '';
 
-        if (existing.manualOverride && existing.manualMarkedDate) {
-          const daysSinceMarked = Math.round((new Date().getTime() - new Date(existing.manualMarkedDate).getTime()) / 86400000);
-          if (daysSinceMarked <= 7) {
-            billStatus = 'Payment Received - Pending SAP Confirmation';
-            diffNotes = `Marked paid manually ${daysSinceMarked}d ago. In 7-day grace period awaiting SAP clearance. Reminders suppressed.`;
-          } else {
-            billStatus = 'Disputed / Grace Period Expired';
-            diffNotes = `Marked paid manually ${daysSinceMarked}d ago, but still open in SAP after 7-day grace period. Escalated to accounts.`;
-          }
-        }
-
-        // Update status for persistent bills
         if (isExcludedCustomer) {
           billStatus = 'Internal / Muted';
+          diffNotes = `Non-trade / internal account.`;
         } else if (newBal < 0 || inv.billAmount < 0) {
           billStatus = 'Credit Note';
+          diffNotes = `Credit note or advance return.`;
         } else if (newBal === 0) {
           billStatus = 'Closed';
-        } else if (newBal > 0 && (billStatus === 'Closed' || billStatus === 'Payment Received')) {
-          billStatus = 'Pending';
+          diffNotes = `Bill fully cleared in SAP export (${fileName}).`;
+        } else {
+          // newBal > 0: official SAP export is authoritative!
+          billStatus = inv.adjustment > 0 ? 'Partially Paid' : 'Pending';
+
+          if (wasManuallyMarked) {
+            diffNotes = `Reverted manual mark: Latest SAP Excel (${fileName}) still reports open outstanding due of ₹${newBal.toLocaleString('en-IN')}. Restored to active ledger per official SAP export.`;
+          } else if (newBal > oldBal) {
+            diffNotes = `Balance increased from ₹${oldBal.toLocaleString('en-IN')} to ₹${newBal.toLocaleString('en-IN')} in SAP.`;
+          } else {
+            diffNotes = `Unchanged bill still pending. Aging updated: ${inv.daysOverdue} days overdue.`;
+          }
         }
 
         await prisma.invoice.update({
@@ -374,10 +383,16 @@ export async function reconcileDailySapExport(
             daysOverdue: inv.daysOverdue,
             agingBucket: inv.agingBucket,
             priority: isExcludedAccount ? 'Low' : inv.priority,
-            actionType: isExcludedAccount ? 'No Action' : inv.actionType,
+            actionType: isExcludedAccount ? 'No Action' : (newBal > 0 ? 'Follow-up Required' : 'No Action'),
             status: billStatus,
             dueDate: inv.dueDate,
             billDate: inv.billDate,
+            manualOverride: false,
+            manualMarkedDate: null,
+            manualMarkedBy: null,
+            gracePeriodExpiresOn: null,
+            settledInFileName: newBal === 0 ? fileName : null,
+            settledAt: newBal === 0 ? new Date() : null,
           },
         });
 
@@ -422,6 +437,8 @@ export async function reconcileDailySapExport(
           actionType: 'No Action',
           nextFollowUpDate: null,
           manualOverride: false,
+          settledInFileName: fileName,
+          settledAt: new Date(),
         },
       });
 
@@ -433,8 +450,8 @@ export async function reconcileDailySapExport(
         previousBalance: b.outstandingAmount,
         currentBalance: 0,
         notes: b.outstandingAmount < 0
-          ? `Credit note / return cleared in SAP.`
-          : `Bill cleared and marked Closed in SAP.`,
+          ? `Credit note / return cleared in SAP (${fileName}).`
+          : `Bill cleared and marked Closed in SAP (${fileName}).`,
       });
     }
   }
@@ -634,6 +651,22 @@ export async function ingestCustomerContacts(
         },
       });
       contactsUpdated++;
+    }
+
+    // 6. If contact row specifies a specific Bill No, bind this contact directly to that specific invoice!
+    if (ct.billNo) {
+      await prisma.invoice.updateMany({
+        where: {
+          tenantId,
+          billNo: { equals: ct.billNo.trim(), mode: 'insensitive' },
+        },
+        data: {
+          contactPerson: ct.personName,
+          contactPhone: ct.mobileNumber || ct.whatsappNumber,
+          contactEmail: ct.emailId,
+          contactDesignation: ct.designation,
+        },
+      });
     }
   }
 

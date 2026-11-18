@@ -75,12 +75,20 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const primaryContact = customer.contacts?.find(c => c.isPrimary) || customer.contacts?.[0];
+      const invoiceContact = (invoice.contactPhone || invoice.contactEmail || invoice.contactPerson) ? {
+        personName: invoice.contactPerson || 'Accounts Department',
+        mobileNumber: invoice.contactPhone,
+        whatsappNumber: invoice.contactPhone,
+        emailId: invoice.contactEmail,
+        designation: invoice.contactDesignation,
+      } : null;
+
+      const primaryContact = invoiceContact || customer.contacts?.find(c => c.isPrimary) || customer.contacts?.[0];
 
       // Strict enforcement: Never send reminders if customer has no contact on file
-      if (!customer.contacts || customer.contacts.length === 0 || !primaryContact) {
+      if (!primaryContact || (!primaryContact.mobileNumber && !primaryContact.whatsappNumber && !primaryContact.emailId)) {
         return NextResponse.json(
-          { error: `Cannot send reminder: ${customer.partyName || customer.rawLedgerName} has no registered contact. Please add contact details in Customer Contacts first.` },
+          { error: `Cannot send reminder for Bill ${invoice.billNo}: No contact details registered for this invoice or customer. Please add contact details first.` },
           { status: 400 }
         );
       }

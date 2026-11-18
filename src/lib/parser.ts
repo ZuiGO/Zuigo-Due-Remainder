@@ -24,6 +24,7 @@ export interface ParsedContactRecord {
   ledgerCode?: string;
   partyName: string;
   branchCode?: string;
+  billNo?: string;
   personName: string;
   designation?: string;
   mobileNumber?: string;
@@ -621,6 +622,18 @@ export function parseCustomerContacts(bufferOrText: Buffer | string): ParsedCont
 
     const branchCode = String(row['Branch Code'] || row['branch_code'] || 'ABMATO').trim();
     const designation = row['Designation'] ? String(row['Designation']).trim() : undefined;
+    const billNo = String(
+      row['Bill No'] ||
+      row['Bill No.'] ||
+      row['Bill Number'] ||
+      row['Invoice No'] ||
+      row['Invoice No.'] ||
+      row['Invoice Number'] ||
+      row['bill_no'] ||
+      row['invoice_no'] ||
+      ''
+    ).trim() || undefined;
+
     const rawPrimary = String(row['Primary Contact (Yes/No)'] || row['is_primary'] || '').trim().toLowerCase();
     const explicitPrimary = rawPrimary.length > 0
       ? (rawPrimary === 'yes' || rawPrimary === 'true' || rawPrimary === '1')
@@ -679,6 +692,7 @@ export function parseCustomerContacts(bufferOrText: Buffer | string): ParsedCont
         ledgerCode: ledgerCode || undefined,
         partyName: partyName || `Customer ${ledgerCode}`,
         branchCode,
+        billNo,
         personName: 'Accounts Department',
         isPrimary: true,
         hasMissingContacts: true,
@@ -704,6 +718,7 @@ export function parseCustomerContacts(bufferOrText: Buffer | string): ParsedCont
         ledgerCode: ledgerCode || undefined,
         partyName: partyName || `Customer ${ledgerCode}`,
         branchCode,
+        billNo,
         personName,
         designation,
         mobileNumber,
