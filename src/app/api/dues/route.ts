@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
-import { isNonTradeOrExcludedAccount, isInternalOrPaidByCompany, computeAging } from '@/lib/parser';
+import { isNonTradeOrExcludedAccount, isInternalOrPaidByCompany, isAdvanceOrCreditBillNo, computeAging } from '@/lib/parser';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,12 +74,15 @@ export async function GET(req: NextRequest) {
         { AND: [{ adjustment: { gt: 0 } }, { outstandingAmount: { gt: 0 } }] },
       ];
     } else if (filter === 'SETTLED') {
+      whereClause.billAmount = { gt: 0 };
+      whereClause.outstandingAmount = 0;
+      whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
       whereClause.OR = [
         { status: 'Settled' },
         { status: 'Payment Received' },
         { status: 'Closed' },
         { status: 'Payment Received - Pending SAP Confirmation' },
-        { outstandingAmount: { lte: 0 } },
+        { outstandingAmount: 0 },
       ];
     } else if (filter === 'OVERDUE') {
       whereClause.customer = { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } };
@@ -140,14 +143,31 @@ export async function GET(req: NextRequest) {
       orderBy: { dueDate: 'asc' },
     });
 
+    let filteredInvoices = rawInvoices;
+    if (filter === 'SETTLED') {
+      filteredInvoices = rawInvoices.filter((inv: any) => {
+        const isInternal =
+          inv.customer?.status === 'EXCLUDED' ||
+          inv.customer?.status === 'INTERNAL_MUTED' ||
+          isNonTradeOrExcludedAccount(inv.customer?.rawLedgerName || inv.customer?.partyName || '') ||
+          isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) ||
+          inv.status === 'Internal / Muted';
+
+        const isAdvance = isAdvanceOrCreditBillNo(inv.billNo) || /advance/i.test(inv.narration || '');
+        const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
+
+        return !isInternal && !isAdvance && !isCreditNote && inv.billAmount > 0;
+      });
+    }
+
     // daysOverdue / agingBucket stored at import time go stale the next day: always recompute from dueDate.
-    const invoices = rawInvoices.map((inv: any) => {
+    const invoices = filteredInvoices.map((inv: any) => {
       const isSettled =
         inv.status === 'Closed' ||
         inv.status === 'Settled' ||
         inv.status === 'Payment Received' ||
         inv.status === 'Payment Received - Pending SAP Confirmation' ||
-        (inv.outstandingAmount <= 0 && inv.billAmount > 0);
+        (inv.outstandingAmount === 0 && inv.billAmount > 0);
 
       const paidAmount = isSettled
         ? (inv.billAmount > 0 ? inv.billAmount : 0)
@@ -172,12 +192,38 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    let settledCount = await prisma.invoice.count({
+    const cleanSettledInvoices = await prisma.invoice.findMany({
       where: {
         tenantId,
-        status: 'Closed',
+        billAmount: { gt: 0 },
+        outstandingAmount: 0,
+        customer: { status: { notIn: ['EXCLUDED', 'INTERNAL_MUTED'] } },
+        OR: [
+          { status: 'Settled' },
+          { status: 'Payment Received' },
+          { status: 'Closed' },
+          { status: 'Payment Received - Pending SAP Confirmation' },
+          { outstandingAmount: 0 },
+        ],
+      },
+      include: {
+        customer: true,
       },
     });
+
+    const settledCount = cleanSettledInvoices.filter((inv: any) => {
+      const isInternal =
+        inv.customer?.status === 'EXCLUDED' ||
+        inv.customer?.status === 'INTERNAL_MUTED' ||
+        isNonTradeOrExcludedAccount(inv.customer?.rawLedgerName || inv.customer?.partyName || '') ||
+        isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) ||
+        inv.status === 'Internal / Muted';
+
+      const isAdvance = isAdvanceOrCreditBillNo(inv.billNo) || /advance/i.test(inv.narration || '');
+      const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
+
+      return !isInternal && !isAdvance && !isCreditNote && inv.billAmount > 0;
+    }).length;
 
     let totalReceivables = 0; // Net Total Bill Amount across full ledger (matches Excel 540,235.83)
     let totalOutstandingAmount = 0; // Net Total Outstanding across full ledger (matches Excel 493,653.00)
@@ -214,11 +260,14 @@ export async function GET(req: NextRequest) {
       const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
 
       const isSettled =
-        inv.status === 'Settled' ||
-        inv.status === 'Payment Received' ||
-        inv.status === 'Closed' ||
-        inv.status === 'Payment Received - Pending SAP Confirmation' ||
-        inv.outstandingAmount <= 0;
+        !isInternal &&
+        !isCreditNote &&
+        inv.billAmount > 0 &&
+        (inv.status === 'Settled' ||
+          inv.status === 'Payment Received' ||
+          inv.status === 'Closed' ||
+          inv.status === 'Payment Received - Pending SAP Confirmation' ||
+          inv.outstandingAmount === 0);
 
       totalPaidAmount += inv.adjustment;
 
@@ -241,7 +290,6 @@ export async function GET(req: NextRequest) {
       }
 
       if (isSettled) {
-        settledCount++;
         tradePaidAmount += (inv.billAmount > 0 ? inv.billAmount : 0);
         continue;
       }

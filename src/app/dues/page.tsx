@@ -694,6 +694,11 @@ export default function DuesPage() {
                   const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
                   const isExcludedAccount = inv.actionType === 'No Action' || inv.isExcluded || isInternalAccount || isCreditNote;
 
+                  // Never render internal/TDS bills, advances, or negative credit notes under Settled
+                  if (filter === 'SETTLED' && (isInternalAccount || isCreditNote || inv.billAmount <= 0 || inv.outstandingAmount < 0 || isAdvance)) {
+                    return null;
+                  }
+
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
                       {/* Customer & Contacts */}
