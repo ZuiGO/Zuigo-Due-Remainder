@@ -68,10 +68,10 @@ describe('Per-Customer Digest Messaging & Run-Locking Tests', () => {
               ledgerCode: '1122334455',
               billNo: 'BILL-003',
               billDate: new Date(),
-              dueDate: new Date(Date.now() + 5 * 86400000), // due in 5 days
+              dueDate: new Date(Date.now() - 5 * 86400000), // 5 days overdue
               billAmount: 5000,
               outstandingAmount: 5000,
-              daysOverdue: -5,
+              daysOverdue: 5,
               priority: 'Low',
             },
           ],

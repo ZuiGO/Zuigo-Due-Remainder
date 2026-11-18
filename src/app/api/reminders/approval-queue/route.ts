@@ -43,8 +43,14 @@ export async function POST(req: NextRequest) {
     const approvedCustomerIds: string[] | undefined = Array.isArray(body.approvedCustomerIds)
       ? body.approvedCustomerIds
       : undefined;
+    const specificInvoiceIds: string[] | undefined = Array.isArray(body.specificInvoiceIds)
+      ? body.specificInvoiceIds
+      : undefined;
 
-    const summary = await executeTenantDigestRun(tenant.id, approvedCustomerIds);
+    const summary = await executeTenantDigestRun(tenant.id, approvedCustomerIds, {
+      force: true,
+      specificInvoiceIds,
+    });
 
     return NextResponse.json({
       success: true,

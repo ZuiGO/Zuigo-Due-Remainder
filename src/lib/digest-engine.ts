@@ -97,9 +97,19 @@ export function compileDigestMessage(payload: DigestPayload): { subject: string;
  */
 export async function executeTenantDigestRun(
   tenantId: string,
-  approvedCustomerIds?: string[],
-  options: { force?: boolean } = {}
+  approvedCustomerIdsOrOptions?: string[] | { force?: boolean; specificInvoiceIds?: string[] },
+  optionsArg?: { force?: boolean; specificInvoiceIds?: string[] }
 ) {
+  let approvedCustomerIds: string[] | undefined;
+  let options: { force?: boolean; specificInvoiceIds?: string[] } = {};
+
+  if (Array.isArray(approvedCustomerIdsOrOptions)) {
+    approvedCustomerIds = approvedCustomerIdsOrOptions;
+    options = optionsArg || {};
+  } else if (approvedCustomerIdsOrOptions && typeof approvedCustomerIdsOrOptions === 'object') {
+    options = approvedCustomerIdsOrOptions;
+  }
+
   // force = demo mode: re-send even if today's digest was already sent / follow-up date not reached yet.
   const force = Boolean(options.force);
   const todayDate = new Date().toISOString().split('T')[0];
@@ -188,9 +198,13 @@ export async function executeTenantDigestRun(
       // 2. Check if customer is due for reminder today:
       // If approvedCustomerIds or force is true, proceed.
       // Otherwise, at least ONE bill must have reached its configured follow-up date (nextFollowUpDate <= now).
-      const billsToInclude = (force || Boolean(approvedCustomerIds && approvedCustomerIds.length > 0))
+      let billsToInclude = (force || Boolean(approvedCustomerIds && approvedCustomerIds.length > 0))
         ? eligibleBills
         : eligibleBills.filter(i => (i.nextFollowUpDate ? new Date(i.nextFollowUpDate) <= now : new Date(i.dueDate.getTime() - 3 * 86400000) <= now));
+
+      if (options.specificInvoiceIds && options.specificInvoiceIds.length > 0) {
+        billsToInclude = billsToInclude.filter(i => options.specificInvoiceIds!.includes(i.id));
+      }
 
       if (billsToInclude.length === 0) continue; // Cadence hold: customer has no bills due on cadence today
 

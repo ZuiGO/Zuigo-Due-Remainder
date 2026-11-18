@@ -202,17 +202,67 @@ describe('End-to-End Test: 3-Day Ingestion, Dashboard Reconciliation, and Config
       assert.notEqual(log.customer.status, 'INTERNAL_MUTED', 'Internal muted accounts must never receive reminders');
       assert.notEqual(log.customer.partyName, 'Electricity Bill', 'Electricity Bill must never receive reminders');
       assert.notEqual(log.customer.partyName, 'TDS on Sales', 'TDS must never receive reminders');
+
+      // STRICT: Must contain clean original message, NO test demo prefixes or routing warnings
+      assert.ok(!log.subject?.includes('[TEST DEMO'), 'Subject must not contain [TEST DEMO');
+      assert.ok(!log.messageContent.includes('*[TEST DEMO'), 'WhatsApp/SMS message content must not contain *[TEST DEMO');
+      assert.ok(!log.messageContent.includes('[TEST for'), 'Message content must not contain [TEST for');
+      assert.ok(!log.messageContent.includes('⚠️ TEST DEMO ROUTING'), 'Message content must not contain TEST DEMO ROUTING banner');
     }
   });
 
-  it('Step 6: Verifies Manual Reminder dispatch and blocks invalid / excluded accounts', async () => {
+  it('Step 6: Verifies Direct Dispatch of Selected Customer Invoices without modal redirect', async () => {
+    // Select specific invoices from an active customer
+    const activeCustomer = await prisma.customer.findFirst({
+      where: {
+        tenantId,
+        status: 'ACTIVE',
+        contacts: { some: {} },
+        invoices: { some: { outstandingAmount: { gt: 0 } } },
+      },
+      include: {
+        invoices: { where: { outstandingAmount: { gt: 0 } } },
+        contacts: true,
+      },
+    });
+
+    assert.ok(activeCustomer, 'Should find active customer with invoices');
+    const selectedInvoice = activeCustomer.invoices[0];
+
+    // Direct dispatch matching dashboard "Send Reminders to Selected Customers"
+    const directResult = await executeTenantDigestRun(
+      tenantId,
+      [activeCustomer.id],
+      { force: true, specificInvoiceIds: [selectedInvoice.id] }
+    );
+
+    assert.ok(directResult.messagesSent > 0, 'Direct dispatch should immediately send reminders');
+
+    // Retrieve the sent log for this direct run
+    const directLogs = await prisma.reminderLog.findMany({
+      where: {
+        tenantId,
+        customerId: activeCustomer.id,
+      },
+      include: { bills: true },
+    });
+
+    assert.ok(directLogs.length > 0, 'Should have logged reminder for direct dispatch');
+    for (const dLog of directLogs) {
+      assert.ok(!dLog.subject?.includes('[TEST DEMO'), 'Direct dispatch subject must be clean original message');
+      assert.ok(!dLog.messageContent.includes('[TEST'), 'Direct dispatch body must be clean original message');
+      assert.ok(dLog.messageContent.includes(selectedInvoice.billNo), 'Direct dispatch must reference the selected bill');
+    }
+  });
+
+  it('Step 7: Verifies Manual Reminder dispatch and blocks invalid / excluded accounts', async () => {
     // 1. Manually dispatch an overdue trade bill
     const overdueBill = await prisma.invoice.findFirst({
       where: {
         tenantId,
         actionType: 'Follow-up Required',
         outstandingAmount: { gt: 0 },
-        customer: { status: 'ACTIVE' },
+        customer: { status: 'ACTIVE', contacts: { some: {} } },
       },
       include: { customer: { include: { contacts: true } } },
     });
@@ -244,7 +294,7 @@ describe('End-to-End Test: 3-Day Ingestion, Dashboard Reconciliation, and Config
     assert.equal(emailRes.effectiveRecipient, OVERRIDE_TARGET_EMAIL, 'Manual Email must target jayesh@zuigo.ai');
   });
 
-  it('Step 7: Verifies Outstanding Customer Dues strictly excludes advances, TDS, and internal utility bills', async () => {
+  it('Step 8: Verifies Outstanding Customer Dues strictly excludes advances, TDS, and internal utility bills', async () => {
     // Query active dues under CUSTOMER_DUES filter
     const dues = await prisma.invoice.findMany({
       where: {

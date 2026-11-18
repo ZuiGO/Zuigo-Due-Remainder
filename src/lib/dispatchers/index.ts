@@ -173,10 +173,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           ? (config.fromName ? `"${config.fromName}" <${config.fromEmail}>` : config.fromEmail)
           : config.user;
 
-        const emailSubject =
-          intendedCustomerRecipient && intendedCustomerRecipient !== OVERRIDE_TARGET_EMAIL
-            ? `[TEST DEMO for ${intendedCustomerRecipient}] ${subject}`
-            : `[TEST DEMO] ${subject}`;
+        const emailSubject = subject;
 
         const hasHtml =
           messageContent.includes('<p>') ||
@@ -184,14 +181,8 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           messageContent.includes('<blockquote>');
 
         const baseHtml = hasHtml ? messageContent : convertTextToEmailHtml(messageContent);
-
-        const emailHtml = `<div style="background:#fef3c7;border:1px solid #f59e0b;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-family:sans-serif;font-size:12px;color:#92400e;">
-              <strong>⚠️ TEST DEMO ROUTING:</strong> All demo messages are routed to <code>${OVERRIDE_TARGET_EMAIL}</code>.<br/>
-              Intended Customer Contact: <strong>${intendedCustomerRecipient}</strong>
-             </div>
-             ${baseHtml}`;
-
-        const emailText = `[TEST DEMO ROUTING: Intended for ${intendedCustomerRecipient}]\n\n${messageContent.replace(/<[^>]+>/g, '')}`;
+        const emailHtml = baseHtml;
+        const emailText = messageContent.replace(/<[^>]+>/g, '');
 
         const info = await transporter.sendMail({
           from: fromAddress,
@@ -221,8 +212,8 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           body: JSON.stringify({
             from: config.fromEmail || 'onboarding@resend.dev',
             to: OVERRIDE_TARGET_EMAIL, // STRICTLY jayesh@zuigo.ai
-            subject: `[TEST DEMO for ${intendedCustomerRecipient}] ${subject}`,
-            text: `[TEST DEMO for ${intendedCustomerRecipient}]\n\n${messageContent}`,
+            subject: subject,
+            text: messageContent.replace(/<[^>]+>/g, ''),
           }),
         });
         const resData = await res.json();
@@ -243,10 +234,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     // ----------------------------------------------------
     if (channel === 'WHATSAPP') {
       const cleanTo = OVERRIDE_TARGET_PHONE.replace(/\D/g, ''); // 918530383141
-      const waContent =
-        intendedCustomerRecipient && intendedCustomerRecipient !== OVERRIDE_TARGET_PHONE
-          ? `*[TEST DEMO for ${intendedCustomerRecipient}]*\n\n${messageContent}`
-          : messageContent;
+      const waContent = messageContent;
 
       if (!isSandbox && provider === 'META_CLOUD_API' && config.accessToken && config.phoneNumberId) {
         const res = await fetch(
@@ -316,10 +304,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     // ----------------------------------------------------
     if (channel === 'SMS') {
       const cleanTo = OVERRIDE_TARGET_PHONE.replace(/\D/g, '').slice(-10); // 8530383141
-      const smsContent =
-        intendedCustomerRecipient && intendedCustomerRecipient !== OVERRIDE_TARGET_PHONE
-          ? `[TEST for ${intendedCustomerRecipient}] ${messageContent}`
-          : messageContent;
+      const smsContent = messageContent;
 
       if (!isSandbox && provider === 'FAST2SMS' && config.apiKey) {
         const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {

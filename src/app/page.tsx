@@ -53,6 +53,7 @@ export default function DashboardPage() {
   const [autoCheckMsg, setAutoCheckMsg] = useState<string | null>(null);
   const [autoSchedule, setAutoSchedule] = useState<{ enabled: boolean; time: string; timeZone: string; lastRun: any } | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [sendingBatch, setSendingBatch] = useState(false);
 
   // Table Filters & Search
   const [filter, setFilter] = useState<string>('CUSTOMER_DUES');
@@ -601,7 +602,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleBatchSendSelectedReminders = () => {
+  const handleBatchSendSelectedReminders = async () => {
     if (selectedInvoiceIds.size === 0) return;
 
     const selectedList = allInvoices.filter((inv: any) => selectedInvoiceIds.has(inv.id));
@@ -646,13 +647,36 @@ export default function DashboardPage() {
     }
 
     if (withoutContacts.length > 0) {
-      alert(`Notice: ${withoutContacts.length} selected invoice(s) belong to customers with NO registered contacts and will be skipped. Reminders will only be prepared for customers with valid contacts.`);
+      alert(`Notice: ${withoutContacts.length} selected invoice(s) belong to customers with NO registered contacts and will be skipped. Reminders will only be sent for customers with valid contacts.`);
     }
 
-    // Open Approval Queue pre-selected with the valid customer IDs!
-    setSelectedQueueIds(new Set(validCustomerIds));
-    setShowApprovalQueue(true);
-    fetchApprovalQueue();
+    try {
+      setSendingBatch(true);
+      const res = await fetch('/api/reminders/approval-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvedCustomerIds: validCustomerIds,
+          specificInvoiceIds: Array.from(selectedInvoiceIds),
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setSelectedInvoiceIds(new Set());
+        setActionMessage(
+          `🚀 Successfully sent payment reminder digest(s) to ${data.summary?.customersProcessed || validCustomerIds.length} customer account(s) (${data.summary?.messagesSent || 0} message(s) dispatched)!`
+        );
+        fetchDashboardData();
+        setTimeout(() => setActionMessage(null), 4000);
+      } else {
+        alert(data.error || 'Failed to dispatch reminders');
+      }
+    } catch (err: any) {
+      alert('Error sending reminders: ' + err?.message);
+    } finally {
+      setSendingBatch(false);
+    }
   };
 
   // Selected Invoices stats
@@ -936,10 +960,11 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleBatchSendSelectedReminders}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#09AEB8] text-white text-xs font-bold hover:brightness-95 transition shadow-2xs"
+                disabled={sendingBatch}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#09AEB8] text-white text-xs font-bold hover:brightness-95 transition shadow-2xs disabled:opacity-50"
               >
-                <Send className="w-3.5 h-3.5" />
-                Send Reminders to Selected Customers
+                <Send className={`w-3.5 h-3.5 ${sendingBatch ? 'animate-pulse' : ''}`} />
+                {sendingBatch ? 'Sending Reminders...' : 'Send Reminders to Selected Customers'}
               </button>
 
               <button
