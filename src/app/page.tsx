@@ -110,21 +110,37 @@ export default function DashboardPage() {
         setRecentBatches(data.recentBatches || []);
         setAllInvoices(data.invoices || []);
         const critical = (data.invoices || []).filter((d: any) => {
+          const party = (d.customer?.partyName || d.customer?.rawLedgerName || '').toLowerCase();
+          const narration = (d.narration || '').toLowerCase();
+          const billNo = (d.billNo || '').toUpperCase();
+
           const isInternal =
             d.customer?.status === 'INTERNAL_MUTED' ||
             d.customer?.status === 'EXCLUDED' ||
-            /electricity/i.test(d.customer?.partyName || '') ||
-            /tds/i.test(d.customer?.partyName || '') ||
-            /sales return/i.test(d.customer?.partyName || '') ||
-            /phonepe/i.test(d.narration || '') ||
-            d.status === 'Internal / Muted';
+            d.status === 'Internal / Muted' ||
+            party.includes('tds') ||
+            party.includes('electricity') ||
+            party.includes('mseb') ||
+            party.includes('msedcl') ||
+            party.includes('sales return') ||
+            party.includes('purchase return') ||
+            narration.includes('phonepe') ||
+            narration.includes('paid by abhiyadna');
+
+          const isAdvance =
+            /^AD\d/.test(billNo) ||
+            /^CN[\s\d\-\/]/.test(billNo) ||
+            narration.includes('advance') ||
+            party.includes('advance');
+
           const isCreditNote = d.outstandingAmount <= 0 || d.billAmount <= 0 || d.status === 'Credit Note';
-          if (isInternal || isCreditNote || d.actionType === 'No Action' || d.isExcluded) {
+
+          if (isInternal || isAdvance || isCreditNote || d.actionType === 'No Action' || d.isExcluded) {
             return false;
           }
           return d.customer?.isFlagged || d.daysOverdue > 0 || d.agingBucket !== 'Not Yet Due';
         });
-        setCriticalDues(critical.slice(0, 6));
+        setCriticalDues(critical.slice(0, 10));
       }
 
       // Fetch pending approval queue count
@@ -384,18 +400,33 @@ export default function DashboardPage() {
 
   const handleOpenRemind = (inv: any) => {
     if (!inv) return;
+    const party = (inv.customer?.partyName || inv.customer?.rawLedgerName || '').toLowerCase();
+    const narration = (inv.narration || '').toLowerCase();
+    const billNo = (inv.billNo || '').toUpperCase();
+
     const isInternal =
       inv.customer?.status === 'INTERNAL_MUTED' ||
       inv.customer?.status === 'EXCLUDED' ||
-      /electricity/i.test(inv.customer?.partyName || '') ||
-      /tds/i.test(inv.customer?.partyName || '') ||
-      /sales return/i.test(inv.customer?.partyName || '') ||
-      /phonepe/i.test(inv.narration || '') ||
-      inv.status === 'Internal / Muted';
+      inv.status === 'Internal / Muted' ||
+      party.includes('tds') ||
+      party.includes('electricity') ||
+      party.includes('mseb') ||
+      party.includes('msedcl') ||
+      party.includes('sales return') ||
+      party.includes('purchase return') ||
+      narration.includes('phonepe') ||
+      narration.includes('paid by abhiyadna');
+
+    const isAdvance =
+      /^AD\d/.test(billNo) ||
+      /^CN[\s\d\-\/]/.test(billNo) ||
+      narration.includes('advance') ||
+      party.includes('advance');
+
     const isCreditNote = inv.outstandingAmount <= 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
 
-    if (isInternal || isCreditNote || inv.actionType === 'No Action' || inv.isExcluded) {
-      alert('Messaging disabled: Credit Notes, negative balances, and internal/TDS bills cannot receive payment reminders.');
+    if (isInternal || isAdvance || isCreditNote || inv.actionType === 'No Action' || inv.isExcluded) {
+      alert('Messaging disabled: Credit Notes, advance payments, negative balances, and internal/TDS bills cannot receive payment reminders.');
       return;
     }
 
@@ -627,20 +658,20 @@ export default function DashboardPage() {
         const openCount = totalCount - (stats?.settledCount || 0);
         const cards = [
           {
-            label: 'Total Bill Amount',
-            value: `₹${stats ? stats.totalReceivables.toLocaleString('en-IN') : '0'}`,
-            note: 'Net billed across full Excel ledger',
-            foot: 'open invoices',
-            percent: pct(openCount, totalCount),
+            label: 'Customer Trade Invoices',
+            value: `₹${stats ? stats.tradeReceivables.toLocaleString('en-IN') : '0'}`,
+            note: 'Commercial customer sales (Excludes TDS & advance vouchers)',
+            foot: `${stats?.tradeInvoiceCount || 0} customer invoices`,
+            percent: 100,
             icon: <TrendingUp className="w-4 h-4" />,
             chip: 'kpi-chip-teal',
           },
           {
-            label: 'Total Outstanding',
-            value: `₹${stats ? stats.totalOutstandingAmount.toLocaleString('en-IN') : '0'}`,
-            note: 'Net balance due across full Excel ledger',
-            foot: 'of total billed',
-            percent: pct(stats?.totalOutstandingAmount || 0, stats?.totalReceivables || 0),
+            label: 'Customer Outstanding',
+            value: `₹${stats ? stats.tradeOutstanding.toLocaleString('en-IN') : '0'}`,
+            note: 'Actionable dues from customers (Excludes TDS & advance vouchers)',
+            foot: 'of total customer billed',
+            percent: pct(stats?.tradeOutstanding || 0, stats?.tradeReceivables || 0),
             icon: <CreditCard className="w-4 h-4" />,
             chip: 'kpi-chip-blue',
           },
@@ -648,20 +679,20 @@ export default function DashboardPage() {
             label: 'Actionable Overdue',
             value: `₹${stats ? stats.totalOverdueAmount.toLocaleString('en-IN') : '0'}`,
             note: `${stats ? stats.overdueCount : 0} customer bills past due date (Eligible for reminders)`,
-            foot: 'of total outstanding overdue',
-            percent: pct(stats?.totalOverdueAmount || 0, stats?.totalOutstandingAmount || 0),
+            foot: 'of customer outstanding',
+            percent: pct(stats?.totalOverdueAmount || 0, stats?.tradeOutstanding || 0),
             icon: <AlertCircle className="w-4 h-4" />,
             chip: 'kpi-chip-red',
             valueClass: 'text-[#ce514c]',
           },
           {
-            label: 'Due Today / Soon',
-            value: `${stats ? stats.dueTodayCount + stats.upcomingCount : 0}`,
-            note: `${stats ? stats.dueTodayCount : 0} today, ${stats ? stats.upcomingCount : 0} upcoming`,
-            foot: 'of invoices',
-            percent: pct((stats?.dueTodayCount || 0) + (stats?.upcomingCount || 0), totalCount),
-            icon: <Clock className="w-4 h-4" />,
-            chip: 'kpi-chip-yellow',
+            label: 'Paid / Settled by Customers',
+            value: `₹${stats ? (stats.tradePaidAmount || Math.max(0, (stats.tradeReceivables || 0) - (stats.tradeOutstanding || 0))).toLocaleString('en-IN') : '0'}`,
+            note: 'Total collected and settled customer dues',
+            foot: 'collected / settled',
+            percent: pct(stats?.tradePaidAmount || (stats?.tradeReceivables - stats?.tradeOutstanding) || 0, stats?.tradeReceivables || 0),
+            icon: <CheckCircle2 className="w-4 h-4" />,
+            chip: 'kpi-chip-teal',
           },
         ];
         return (
@@ -809,7 +840,33 @@ export default function DashboardPage() {
 
                       {/* Paid / Adjusted */}
                       <td className="py-3.5 px-[18px] text-emerald-700 font-medium">
-                        {inv.adjustment > 0 ? `₹${inv.adjustment.toLocaleString('en-IN')}` : '₹0'}
+                        {(() => {
+                          const isFullySettled =
+                            inv.status === 'Closed' ||
+                            inv.status === 'Settled' ||
+                            inv.status === 'Payment Received' ||
+                            (inv.outstandingAmount <= 0 && inv.billAmount > 0);
+                          const paidVal =
+                            inv.paidAmount !== undefined
+                              ? inv.paidAmount
+                              : isFullySettled
+                              ? inv.billAmount
+                              : Math.max(inv.adjustment || 0, Math.round(((inv.billAmount || 0) - Math.max(0, inv.outstandingAmount || 0)) * 100) / 100);
+
+                          if (paidVal > 0) {
+                            return (
+                              <>
+                                <div className="font-semibold text-xs">₹{paidVal.toLocaleString('en-IN')}</div>
+                                {isFullySettled ? (
+                                  <span className="text-[10px] text-emerald-600 font-bold block">Fully Settled</span>
+                                ) : (
+                                  <span className="text-[10px] text-teal-600 font-semibold block">Partially Settled</span>
+                                )}
+                              </>
+                            );
+                          }
+                          return <span className="text-slate-400 text-xs">₹0</span>;
+                        })()}
                       </td>
 
                       {/* Outstanding Due */}

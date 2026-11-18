@@ -131,4 +131,19 @@ describe('Regression: bill settled against an advance stays a live receivable', 
     assert.strictEqual(parsed[0].adjustment, 30000);
     assert.strictEqual(parsed[0].outstandingAmount, 70000, 'Outstanding must be strictly 100,000 - 30,000 = 70,000');
   });
+
+  it('should strictly throw error when Excel does not contain Ledger Code column', () => {
+    const rowsWithoutLedger = [
+      ['Party Name', 'Branch Code', 'Bill No', 'Bill Date', 'Due Date', 'Bill Amount', 'Paid / Adjusted', 'Outstanding Amount'],
+      ['Test Customer', 'ABMATO', 'INV-001', '01-10-2026', '15-10-2026', 100000, 30000, 70000],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rowsWithoutLedger), 'Dues');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    assert.throws(
+      () => parseSapDuesExport(buf),
+      /Missing required column: 'Ledger Code'/
+    );
+  });
 });

@@ -763,21 +763,42 @@ export default function DuesPage() {
 
                       {/* Paid / Adjusted */}
                       <td className="py-3.5 px-4 font-semibold text-emerald-700 whitespace-nowrap">
-                        {inv.adjustment > 0 ? (
-                          <>
-                            <div>₹{inv.adjustment.toLocaleString('en-IN')}</div>
-                            {isAdvance && (
-                              <div className="text-[10px] text-emerald-600 font-bold">Advance Collected</div>
-                            )}
-                          </>
-                        ) : isAdvance ? (
-                          <>
-                            <div>₹{inv.billAmount.toLocaleString('en-IN')}</div>
-                            <div className="text-[10px] text-emerald-600 font-bold">Advance Collected</div>
-                          </>
-                        ) : (
-                          '₹0'
-                        )}
+                        {(() => {
+                          const isFullySettled =
+                            inv.status === 'Closed' ||
+                            inv.status === 'Settled' ||
+                            inv.status === 'Payment Received' ||
+                            (inv.outstandingAmount <= 0 && inv.billAmount > 0);
+                          const paidVal =
+                            inv.paidAmount !== undefined
+                              ? inv.paidAmount
+                              : isFullySettled
+                              ? inv.billAmount
+                              : Math.max(inv.adjustment || 0, Math.round(((inv.billAmount || 0) - Math.max(0, inv.outstandingAmount || 0)) * 100) / 100);
+
+                          if (paidVal > 0) {
+                            return (
+                              <>
+                                <div>₹{paidVal.toLocaleString('en-IN')}</div>
+                                {isFullySettled ? (
+                                  <div className="text-[10px] text-emerald-600 font-bold">Fully Settled</div>
+                                ) : isAdvance ? (
+                                  <div className="text-[10px] text-emerald-600 font-bold">Advance Collected</div>
+                                ) : (
+                                  <div className="text-[10px] text-teal-600 font-semibold">Partially Settled</div>
+                                )}
+                              </>
+                            );
+                          } else if (isAdvance) {
+                            return (
+                              <>
+                                <div>₹{inv.billAmount.toLocaleString('en-IN')}</div>
+                                <div className="text-[10px] text-emerald-600 font-bold">Advance Collected</div>
+                              </>
+                            );
+                          }
+                          return <span className="text-slate-400">₹0</span>;
+                        })()}
                       </td>
 
                       {/* Outstanding Due (Distinct & Highlighted) */}

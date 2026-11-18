@@ -352,6 +352,18 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
   const now = new Date();
   const parsedBills: ParsedSapBill[] = [];
 
+  // Reject files missing the mandatory 'Ledger Code' column
+  const candidateLedgerKeys = ['Ledger Code', 'ledger_code', 'LedgerCode', 'Ledger', 'Account Code'];
+  const hasLedgerCodeColumn = rawRows.some(row => {
+    return candidateLedgerKeys.some(k => getRowVal(row, [k]) !== undefined);
+  });
+
+  if (!hasLedgerCodeColumn) {
+    throw new Error(
+      "Missing required column: 'Ledger Code'. The uploaded Excel file must contain a 'Ledger Code' column to ensure accurate customer mapping and prevent mismatched dues."
+    );
+  }
+
   for (const row of rawRows) {
     const rawParty = String(
       getRowVal(row, ['Party Name', 'party_name', 'PartyName', 'Customer Name', 'Party']) || ''
@@ -361,17 +373,12 @@ export function parseSapDuesExport(bufferOrText: Buffer | string): ParsedSapBill
     ).trim();
 
     // Discard Grand Total or empty rows
-    if (/grand\s*total/i.test(rawLedger) || /grand\s*total/i.test(rawParty)) {
+    if (!rawLedger || /grand\s*total/i.test(rawLedger) || /grand\s*total/i.test(rawParty)) {
       continue;
     }
 
     if (!rawParty && !rawLedger) {
       continue;
-    }
-
-    // If Ledger Code column is missing in export, derive a deterministic code from Party Name
-    if (!rawLedger) {
-      rawLedger = `LEDGER_${rawParty.replace(/[^A-Za-z0-9]/g, '_').toUpperCase().slice(0, 24)}`;
     }
 
     const billNo = String(

@@ -141,7 +141,25 @@ export async function GET(req: NextRequest) {
     });
 
     // daysOverdue / agingBucket stored at import time go stale the next day: always recompute from dueDate.
-    const invoices = rawInvoices.map((inv: any) => ({ ...inv, ...computeAging(inv.dueDate, now) }));
+    const invoices = rawInvoices.map((inv: any) => {
+      const isSettled =
+        inv.status === 'Closed' ||
+        inv.status === 'Settled' ||
+        inv.status === 'Payment Received' ||
+        inv.status === 'Payment Received - Pending SAP Confirmation' ||
+        (inv.outstandingAmount <= 0 && inv.billAmount > 0);
+
+      const paidAmount = isSettled
+        ? (inv.billAmount > 0 ? inv.billAmount : 0)
+        : Math.max(inv.adjustment || 0, Math.round(((inv.billAmount || 0) - Math.max(0, inv.outstandingAmount || 0)) * 100) / 100);
+
+      return {
+        ...inv,
+        ...computeAging(inv.dueDate, now),
+        paidAmount,
+        isSettled,
+      };
+    });
 
     // Compute live aging statistics for dashboard from all active open ledger invoices for this tenant
     const allInvoices = await prisma.invoice.findMany({
@@ -167,6 +185,7 @@ export async function GET(req: NextRequest) {
 
     let tradeReceivables = 0; // Total Gross Bill Amount for actionable trade customer invoices (577,311)
     let tradeOutstanding = 0; // Net Outstanding Due for trade customer invoices (530,728)
+    let tradePaidAmount = 0; // Total Customer Paid & Settled amount (46,583)
     let totalOverdueAmount = 0; // Net Overdue Amount for trade customer bills past due date (439,364)
     let upcomingAmount = 0; // Invoices due in the future (91,364)
     let internalMutedAmount = 0; // Internal utility/tax vouchers (12,552)
@@ -184,7 +203,6 @@ export async function GET(req: NextRequest) {
 
     for (const inv of allInvoices) {
       totalReceivables += inv.billAmount;
-      totalPaidAmount += inv.adjustment;
       totalOutstandingAmount += inv.outstandingAmount;
 
       const isInternal =
@@ -194,6 +212,19 @@ export async function GET(req: NextRequest) {
         inv.status === 'Internal / Muted';
 
       const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
+
+      const isSettled =
+        inv.status === 'Settled' ||
+        inv.status === 'Payment Received' ||
+        inv.status === 'Closed' ||
+        inv.status === 'Payment Received - Pending SAP Confirmation' ||
+        inv.outstandingAmount <= 0;
+
+      const invoicePaidAmount = isSettled
+        ? (inv.billAmount > 0 ? inv.billAmount : 0)
+        : Math.max(inv.adjustment || 0, Math.round(((inv.billAmount || 0) - Math.max(0, inv.outstandingAmount || 0)) * 100) / 100);
+
+      totalPaidAmount += invoicePaidAmount;
 
       if (isInternal) {
         internalCount++;
@@ -213,20 +244,15 @@ export async function GET(req: NextRequest) {
         flaggedCustomerIds.add(inv.customerId);
       }
 
-      const isSettled =
-        inv.status === 'Settled' ||
-        inv.status === 'Payment Received' ||
-        inv.status === 'Closed' ||
-        inv.status === 'Payment Received - Pending SAP Confirmation' ||
-        inv.outstandingAmount <= 0;
-
       if (isSettled) {
         settledCount++;
+        tradePaidAmount += (inv.billAmount > 0 ? inv.billAmount : 0);
         continue;
       }
 
       tradeReceivables += inv.billAmount;
       tradeOutstanding += inv.outstandingAmount;
+      tradePaidAmount += invoicePaidAmount;
 
       if (
         inv.status === 'Partially Settled' ||
@@ -250,12 +276,40 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const closedInvoices = await prisma.invoice.findMany({
+      where: {
+        tenantId,
+        status: 'Closed',
+      },
+      include: {
+        customer: true,
+      },
+    });
+
+    for (const inv of closedInvoices) {
+      const isInternal =
+        inv.customer.status === 'EXCLUDED' ||
+        inv.customer.status === 'INTERNAL_MUTED' ||
+        isInternalOrPaidByCompany(inv.customer.rawLedgerName || inv.customer.partyName || '', inv.narration || undefined) ||
+        inv.status === 'Internal / Muted';
+
+      const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
+
+      if (!isInternal && !isCreditNote && inv.billAmount > 0) {
+        tradePaidAmount += inv.billAmount;
+      }
+      if (inv.billAmount > 0) {
+        totalPaidAmount += inv.billAmount;
+      }
+    }
+
     totalReceivables = Math.round(totalReceivables * 100) / 100;
     totalOutstandingAmount = Math.round(totalOutstandingAmount * 100) / 100;
     totalOverdueAmount = Math.round(totalOverdueAmount * 100) / 100;
     totalPaidAmount = Math.round(totalPaidAmount * 100) / 100;
     tradeReceivables = Math.round(tradeReceivables * 100) / 100;
     tradeOutstanding = Math.round(tradeOutstanding * 100) / 100;
+    tradePaidAmount = Math.round(tradePaidAmount * 100) / 100;
     upcomingAmount = Math.round(upcomingAmount * 100) / 100;
     internalMutedAmount = Math.round(internalMutedAmount * 100) / 100;
     creditNotesAmount = Math.round(creditNotesAmount * 100) / 100;
@@ -346,6 +400,7 @@ export async function GET(req: NextRequest) {
         totalPaidAmount,
         tradeReceivables,
         tradeOutstanding,
+        tradePaidAmount,
         upcomingAmount,
         internalMutedAmount,
         creditNotesAmount,

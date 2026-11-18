@@ -270,7 +270,7 @@ export async function reconcileDailySapExport(
           data: {
             previousOutstandingAmount: oldBal,
             outstandingAmount: 0,
-            adjustment: inv.adjustment || Math.round(((existing.adjustment || 0) + paidDifference) * 100) / 100,
+            adjustment: inv.adjustment || (existing.billAmount > 0 ? existing.billAmount : Math.round(((existing.adjustment || 0) + paidDifference) * 100) / 100),
             daysOverdue: inv.daysOverdue,
             agingBucket: inv.agingBucket,
             priority: 'Low',
@@ -410,6 +410,7 @@ export async function reconcileDailySapExport(
         data: {
           previousOutstandingAmount: b.outstandingAmount,
           outstandingAmount: 0,
+          adjustment: b.billAmount > 0 ? b.billAmount : b.adjustment,
           status: 'Closed',
           actionType: 'No Action',
           manualOverride: false,

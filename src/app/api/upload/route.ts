@@ -183,9 +183,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('File Upload & Ingestion error:', error);
+    const status = error?.message?.includes('Ledger Code') ? 422 : 500;
     return NextResponse.json(
       { error: error?.message || 'Server error processing file(s)' },
-      { status: 500 }
+      { status }
     );
   }
 }
