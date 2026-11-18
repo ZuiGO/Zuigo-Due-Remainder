@@ -220,11 +220,7 @@ export async function GET(req: NextRequest) {
         inv.status === 'Payment Received - Pending SAP Confirmation' ||
         inv.outstandingAmount <= 0;
 
-      const invoicePaidAmount = isSettled
-        ? (inv.billAmount > 0 ? inv.billAmount : 0)
-        : Math.max(inv.adjustment || 0, Math.round(((inv.billAmount || 0) - Math.max(0, inv.outstandingAmount || 0)) * 100) / 100);
-
-      totalPaidAmount += invoicePaidAmount;
+      totalPaidAmount += inv.adjustment;
 
       if (isInternal) {
         internalCount++;
@@ -252,7 +248,7 @@ export async function GET(req: NextRequest) {
 
       tradeReceivables += inv.billAmount;
       tradeOutstanding += inv.outstandingAmount;
-      tradePaidAmount += invoicePaidAmount;
+      tradePaidAmount += inv.adjustment;
 
       if (
         inv.status === 'Partially Settled' ||
@@ -297,9 +293,6 @@ export async function GET(req: NextRequest) {
 
       if (!isInternal && !isCreditNote && inv.billAmount > 0) {
         tradePaidAmount += inv.billAmount;
-      }
-      if (inv.billAmount > 0) {
-        totalPaidAmount += inv.billAmount;
       }
     }
 
