@@ -1453,15 +1453,18 @@ export default function DashboardPage() {
               { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
               { id: 'PARTIALLY_SETTLED', label: 'Partially Paid', count: stats?.partiallySettledCount },
               { id: 'SETTLED', label: 'Settled', count: stats?.settledCount },
-              { id: 'CREDIT_NOTES', label: 'Advance Paid & Credits', count: stats?.creditNotesCount },
-              { id: 'INTERNAL', label: 'TDS & Internal Bills', count: stats?.internalCount },
+              {
+                id: 'INTERNAL',
+                label: 'Advances, TDS & Internal',
+                count: stats?.nonTradeCount ?? ((stats?.creditNotesCount || 0) + (stats?.internalCount || 0)),
+              },
               { id: 'ALL_LEDGER', label: 'All Raw Ledger (Full Audit)', count: stats?.totalCount },
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setFilter(tab.id)}
                 className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 ${
-                  filter === tab.id
+                  filter === tab.id || (tab.id === 'INTERNAL' && filter === 'CREDIT_NOTES')
                     ? 'bg-[#09AEB8] text-white shadow-2xs font-bold'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-white'
                 }`}
@@ -1470,7 +1473,7 @@ export default function DashboardPage() {
                 {typeof tab.count === 'number' && (
                   <span
                     className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                      filter === tab.id
+                      filter === tab.id || (tab.id === 'INTERNAL' && filter === 'CREDIT_NOTES')
                         ? 'bg-white/20 text-white'
                         : 'bg-slate-200 text-slate-700'
                     }`}

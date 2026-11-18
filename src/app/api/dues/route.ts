@@ -225,17 +225,23 @@ export async function GET(req: NextRequest) {
       whereClause.outstandingAmount = { gt: 0 };
       whereClause.billAmount = { gt: 0 };
       whereClause.billNo = { in: Array.from(newBillNosSet) };
-    } else if (filter === 'INTERNAL' || filter === 'MUTED' || filter === 'TDS') {
+    } else if (
+      filter === 'INTERNAL' ||
+      filter === 'MUTED' ||
+      filter === 'TDS' ||
+      filter === 'CREDIT_NOTES' ||
+      filter === 'CREDIT NOTES' ||
+      filter === 'ADVANCES' ||
+      filter === 'NON_TRADE_ADJUSTMENTS' ||
+      filter === 'ADVANCES_TDS_INTERNAL'
+    ) {
+      delete whereClause.status;
       whereClause.OR = [
         { customer: { status: { in: ['EXCLUDED', 'INTERNAL_MUTED'] } } },
-        { actionType: 'No Action' },
         { status: 'Internal / Muted' },
-      ];
-    } else if (filter === 'CREDIT_NOTES' || filter === 'CREDIT NOTES' || filter === 'ADVANCES') {
-      whereClause.OR = [
+        { status: 'Credit Note' },
         { outstandingAmount: { lt: 0 } },
         { billAmount: { lt: 0 } },
-        { status: 'Credit Note' },
         { billNo: { startsWith: 'AD' } },
       ];
     } else if (filter === 'ALL_LEDGER') {
@@ -325,25 +331,40 @@ export async function GET(req: NextRequest) {
     });
 
     let filteredInvoices = rawInvoices;
-    if (filter === 'INTERNAL' || filter === 'MUTED' || filter === 'TDS') {
+    if (
+      filter === 'INTERNAL' ||
+      filter === 'MUTED' ||
+      filter === 'TDS' ||
+      filter === 'CREDIT_NOTES' ||
+      filter === 'CREDIT NOTES' ||
+      filter === 'ADVANCES' ||
+      filter === 'NON_TRADE_ADJUSTMENTS' ||
+      filter === 'ADVANCES_TDS_INTERNAL'
+    ) {
       filteredInvoices = rawInvoices.filter((inv: any) => {
+        const isSettledTradeBill =
+          (inv.status === 'Closed' || inv.status === 'Settled') &&
+          !isNonTradeOrExcludedAccount(inv.customer?.rawLedgerName || inv.customer?.partyName || '') &&
+          !isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) &&
+          !isAdvanceOrCreditBillNo(inv.billNo) &&
+          inv.outstandingAmount === 0;
+
+        if (isSettledTradeBill) return false;
+
         const isInternal =
           inv.customer?.status === 'EXCLUDED' ||
           inv.customer?.status === 'INTERNAL_MUTED' ||
           isNonTradeOrExcludedAccount(inv.customer?.rawLedgerName || inv.customer?.partyName || '') ||
           isInternalOrPaidByCompany(inv.customer?.rawLedgerName || inv.customer?.partyName || '', inv.narration || undefined) ||
-          inv.status === 'Internal / Muted' ||
-          inv.actionType === 'No Action';
-        return isInternal;
-      });
-    } else if (filter === 'CREDIT_NOTES' || filter === 'CREDIT NOTES' || filter === 'ADVANCES') {
-      filteredInvoices = rawInvoices.filter((inv: any) => {
+          inv.status === 'Internal / Muted';
+
         const isCreditOrAdv =
           inv.outstandingAmount < 0 ||
           inv.billAmount < 0 ||
           inv.status === 'Credit Note' ||
           isAdvanceOrCreditBillNo(inv.billNo);
-        return isCreditOrAdv;
+
+        return isInternal || isCreditOrAdv;
       });
     } else if (filter === 'SETTLED') {
       filteredInvoices = rawInvoices.filter((inv: any) => {
@@ -681,6 +702,8 @@ export async function GET(req: NextRequest) {
         settledCount,
         internalCount,
         creditNotesCount,
+        nonTradeCount: internalCount + creditNotesCount,
+        nonTradeAmount: Math.round((internalMutedAmount + creditNotesAmount) * 100) / 100,
         totalCount: allInvoices.length,
         tradeInvoiceCount,
         newTodayCount: newBillNosSet.size,
