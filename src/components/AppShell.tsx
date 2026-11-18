@@ -15,12 +15,11 @@ import {
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard, title: 'Dashboard overview' },
-  { href: '/dues', label: 'Dues & Invoices', icon: Receipt, title: 'Dues & invoices' },
-  { href: '/customers', label: 'Customer Contacts', icon: Users, title: 'Customer contacts' },
-  { href: '/templates', label: 'Message Templates', icon: MessageSquare, title: 'Message templates' },
-  { href: '/logs', label: 'Reminder History', icon: History, title: 'Reminder history' },
-  { href: '/settings', label: 'Settings & Gateways', icon: Settings, title: 'Settings & gateways' },
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard, title: 'Dashboard & Receivables Overview' },
+  { href: '/customers', label: 'Customer Contacts', icon: Users, title: 'Customer Contacts Directory' },
+  { href: '/templates', label: 'Message Templates', icon: MessageSquare, title: 'Message Templates' },
+  { href: '/logs', label: 'Reminder History', icon: History, title: 'Reminder History & Audit Logs' },
+  { href: '/settings', label: 'Settings & Gateways', icon: Settings, title: 'Settings & Integrations' },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {

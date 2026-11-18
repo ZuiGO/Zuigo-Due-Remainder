@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { 
   AlertCircle, 
@@ -34,7 +34,10 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
-  CheckCheck
+  CheckCheck,
+  Receipt,
+  Users,
+  Filter
 } from 'lucide-react';
 import { selectBestTemplate, populateInvoiceTemplate } from '@/lib/template-renderer';
 
@@ -44,14 +47,17 @@ export default function DashboardPage() {
   const [latestBatch, setLatestBatch] = useState<any>(null);
   const [recentBatches, setRecentBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
-  const [comparisonSearch, setComparisonSearch] = useState('');
-  const [showComparisonDetails, setShowComparisonDetails] = useState(true);
   const [allInvoices, setAllInvoices] = useState<any[]>([]);
-  const [criticalDues, setCriticalDues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningAutoCheck, setRunningAutoCheck] = useState(false);
   const [autoCheckMsg, setAutoCheckMsg] = useState<string | null>(null);
   const [autoSchedule, setAutoSchedule] = useState<{ enabled: boolean; time: string; timeZone: string; lastRun: any } | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  // Table Filters & Search
+  const [filter, setFilter] = useState<string>('ALL');
+  const [search, setSearch] = useState<string>('');
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
 
   // Approval Queue State (Semi-Automated Dispatch Mode)
   const [showApprovalQueue, setShowApprovalQueue] = useState(false);
@@ -74,33 +80,36 @@ export default function DashboardPage() {
   const [customRemindMessage, setCustomRemindMessage] = useState('');
   const [showRemindModal, setShowRemindModal] = useState(false);
 
-  // Upload modal state
+  // Partial Settlement Modal State
+  const [partialModal, setPartialModal] = useState<{
+    isOpen: boolean;
+    invoice: any | null;
+    amount: string;
+  }>({
+    isOpen: false,
+    invoice: null,
+    amount: '',
+  });
+
+  // Dedicated Import Modal State (with distinct tabs for SAP Dues, Contacts, and Both)
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadTab, setUploadTab] = useState<'SAP_DUES' | 'CUSTOMER_CONTACTS' | 'BOTH'>('SAP_DUES');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const formatDateTime = (dateStr: string | Date | null | undefined) => {
-    if (!dateStr) return '—';
-    const d = new Date(dateStr);
-    return d.toLocaleString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true,
-    });
-  };
-
-  const fetchDashboardData = async (batchId?: string) => {
+  const fetchDashboardData = async (batchId?: string, activeFilter: string = filter, activeSearch: string = search) => {
     try {
       setLoading(true);
       const bId = batchId !== undefined ? batchId : selectedBatchId;
-      const url = bId ? `/api/dues?batchId=${bId}` : '/api/dues';
+      const params = new URLSearchParams();
+      if (bId) params.set('batchId', bId);
+      if (activeFilter) params.set('filter', activeFilter);
+      if (activeSearch && activeSearch.trim().length > 0) params.set('search', activeSearch.trim());
+
+      const url = `/api/dues?${params.toString()}`;
       const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
@@ -108,39 +117,7 @@ export default function DashboardPage() {
         setStats(data.stats);
         setLatestBatch(data.latestBatch);
         setRecentBatches(data.recentBatches || []);
-        setAllInvoices(data.invoices || []);
-        const critical = (data.invoices || []).filter((d: any) => {
-          const party = (d.customer?.partyName || d.customer?.rawLedgerName || '').toLowerCase();
-          const narration = (d.narration || '').toLowerCase();
-          const billNo = (d.billNo || '').toUpperCase();
-
-          const isInternal =
-            d.customer?.status === 'INTERNAL_MUTED' ||
-            d.customer?.status === 'EXCLUDED' ||
-            d.status === 'Internal / Muted' ||
-            party.includes('tds') ||
-            party.includes('electricity') ||
-            party.includes('mseb') ||
-            party.includes('msedcl') ||
-            party.includes('sales return') ||
-            party.includes('purchase return') ||
-            narration.includes('phonepe') ||
-            narration.includes('paid by abhiyadna');
-
-          const isAdvance =
-            /^AD\d/.test(billNo) ||
-            /^CN[\s\d\-\/]/.test(billNo) ||
-            narration.includes('advance') ||
-            party.includes('advance');
-
-          const isCreditNote = d.outstandingAmount <= 0 || d.billAmount <= 0 || d.status === 'Credit Note';
-
-          if (isInternal || isAdvance || isCreditNote || d.actionType === 'No Action' || d.isExcluded) {
-            return false;
-          }
-          return d.customer?.isFlagged || d.daysOverdue > 0 || d.agingBucket !== 'Not Yet Due';
-        });
-        setCriticalDues(critical.slice(0, 10));
+        setAllInvoices(data.invoices || data.dues || []);
       }
 
       // Fetch pending approval queue count
@@ -170,15 +147,18 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSelectBatch = (bId: string) => {
-    setSelectedBatchId(bId);
-    fetchDashboardData(bId);
-  };
+  useEffect(() => {
+    fetchDashboardData(selectedBatchId || undefined, filter, search);
+  }, [filter, search]);
 
   useEffect(() => {
-    fetchDashboardData();
-  }, []);
+    fetch('/api/reminders/auto-schedule')
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setAutoSchedule(d); })
+      .catch(() => {});
+  }, [autoCheckMsg]);
 
+  // Approval Queue logic
   const isItemEligible = (item: any) => {
     const allSent = item.alreadySentToday?.whatsapp && item.alreadySentToday?.sms && item.alreadySentToday?.email;
     return Boolean(item.hasContacts && item.reminderEnabled && !allSent);
@@ -193,7 +173,7 @@ export default function DashboardPage() {
       if (data.success) {
         setQueuedItems(data.queue || []);
         setQueuedCount(data.totalQueuedCount || 0);
-        // Pre-select all eligible customers who have registered contacts and unsent channels
+        // Pre-select only customers who have registered contacts and unsent channels
         const autoSelected = new Set<string>();
         (data.queue || []).forEach((item: any) => {
           if (isItemEligible(item)) {
@@ -215,6 +195,11 @@ export default function DashboardPage() {
   };
 
   const handleToggleQueueSelect = (id: string) => {
+    const item = queuedItems.find(q => q.customerId === id);
+    if (!item?.hasContacts) {
+      alert('Cannot select customer without contact details. Please add contact info in Customer Contacts first.');
+      return;
+    }
     const next = new Set(selectedQueueIds);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -228,7 +213,7 @@ export default function DashboardPage() {
 
   const handleSelectAllInView = (itemsInView: any[]) => {
     const next = new Set(selectedQueueIds);
-    itemsInView.forEach(item => next.add(item.customerId));
+    itemsInView.filter(i => i.hasContacts).forEach(item => next.add(item.customerId));
     setSelectedQueueIds(next);
   };
 
@@ -239,7 +224,8 @@ export default function DashboardPage() {
   };
 
   const handleToggleSelectAllInView = (itemsInView: any[]) => {
-    const allSelected = itemsInView.length > 0 && itemsInView.every(item => selectedQueueIds.has(item.customerId));
+    const eligibleInView = itemsInView.filter(i => i.hasContacts);
+    const allSelected = eligibleInView.length > 0 && eligibleInView.every(item => selectedQueueIds.has(item.customerId));
     if (allSelected) {
       handleDeselectAllInView(itemsInView);
     } else {
@@ -283,18 +269,10 @@ export default function DashboardPage() {
     }
   };
 
-  useEffect(() => {
-    fetch('/api/reminders/auto-schedule')
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setAutoSchedule(d); })
-      .catch(() => {});
-  }, [autoCheckMsg]);
-
   const handleRunAutoCheck = async () => {
     try {
       setRunningAutoCheck(true);
       setAutoCheckMsg(null);
-      // force=true: demo mode - re-sends today's digest even if it already went out.
       const res = await fetch('/api/reminders/auto-check?force=true', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
@@ -310,9 +288,11 @@ export default function DashboardPage() {
     }
   };
 
+  // Upload Handlers
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFiles(Array.from(e.target.files));
+      setUploadMsg(null);
     }
   };
 
@@ -321,13 +301,14 @@ export default function DashboardPage() {
     setIsDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       setSelectedFiles(Array.from(e.dataTransfer.files));
+      setUploadMsg(null);
     }
   };
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedFiles.length === 0) {
-      setUploadMsg('Please select an Excel (.xlsx, .xls) or CSV file first.');
+      setUploadMsg('Please select a file to import.');
       return;
     }
 
@@ -347,7 +328,7 @@ export default function DashboardPage() {
       const data = await res.json();
       if (data.success) {
         setUploadMsg(data.message || 'Import successful!');
-        fetchDashboardData(); // Synchronize dashboard metrics immediately!
+        fetchDashboardData();
         setTimeout(() => {
           setShowUploadModal(false);
           setSelectedFiles([]);
@@ -364,6 +345,7 @@ export default function DashboardPage() {
     }
   };
 
+  // Manual Remind Logic
   const applyTemplateToModal = (
     channel: 'WHATSAPP' | 'SMS' | 'EMAIL',
     lang: string,
@@ -470,17 +452,26 @@ export default function DashboardPage() {
 
   const handleSendReminder = async () => {
     if (!selectedInvoice) return;
-    if (
-      selectedInvoice.outstandingAmount <= 0 ||
-      selectedInvoice.billAmount <= 0 ||
-      selectedInvoice.status === 'Credit Note' ||
-      selectedInvoice.actionType === 'No Action' ||
-      selectedInvoice.customer?.status === 'INTERNAL_MUTED' ||
-      selectedInvoice.customer?.status === 'EXCLUDED'
-    ) {
-      alert('Cannot send payment reminder: This invoice is a Credit Note / Internal voucher with no actionable customer receivable.');
+
+    const primaryContact = selectedInvoice.customer?.contacts?.find((c: any) => c.isPrimary) || selectedInvoice.customer?.contacts?.[0];
+    const hasPhone = Boolean(primaryContact?.mobileNumber || primaryContact?.whatsappNumber);
+    const hasEmail = Boolean(primaryContact?.emailId);
+
+    if (!primaryContact || (!hasPhone && !hasEmail)) {
+      alert('Cannot send reminder: Customer has no registered contact information. Please add mobile number or email in Customer Contacts first.');
       return;
     }
+
+    if (remindChannel === 'EMAIL' && !hasEmail) {
+      alert('Cannot send Email reminder: No email address found for this customer contact.');
+      return;
+    }
+
+    if ((remindChannel === 'WHATSAPP' || remindChannel === 'SMS') && !hasPhone) {
+      alert(`Cannot send ${remindChannel} reminder: No mobile or WhatsApp number found for this customer contact.`);
+      return;
+    }
+
     try {
       const res = await fetch('/api/reminders/send', {
         method: 'POST',
@@ -496,41 +487,19 @@ export default function DashboardPage() {
       });
 
       const data = await res.json();
-      if (data.success && data.results?.[0]?.actionUrl) {
-        window.open(data.results[0].actionUrl, '_blank');
+      if (data.success) {
+        if (data.results?.[0]?.actionUrl && data.results[0].actionUrl !== '#') {
+          window.open(data.results[0].actionUrl, '_blank');
+        }
         setShowRemindModal(false);
+        setActionMessage(`Reminder sent successfully for Bill ${selectedInvoice.billNo}`);
         fetchDashboardData();
+        setTimeout(() => setActionMessage(null), 3500);
+      } else {
+        alert('Failed to send reminder: ' + (data.error || 'Unknown error'));
       }
-    } catch (err) {
-      console.error('Error sending reminder:', err);
-    }
-  };
-
-  const handleRemindFromDiff = (log: any) => {
-    const match = allInvoices.find(
-      (inv: any) =>
-        (log.billNo && inv.billNo?.toUpperCase().trim() === log.billNo.toUpperCase().trim()) ||
-        (inv.customer?.partyName && log.partyName && inv.customer.partyName.toLowerCase().includes(log.partyName.toLowerCase()))
-    );
-
-    if (match) {
-      handleOpenRemind(match);
-    } else {
-      const syntheticInvoice = {
-        id: log.invoiceId || `diff_${Date.now()}`,
-        billNo: log.billNo || 'Open Bill',
-        outstandingAmount: log.currentBalance || 0,
-        dueDate: new Date().toISOString(),
-        daysOverdue: 15,
-        agingBucket: '1 - 30 Days Overdue',
-        priority: 'High',
-        customer: {
-          partyName: log.partyName || 'Customer',
-          rawLedgerName: log.partyName || 'Customer',
-          contacts: [],
-        },
-      };
-      handleOpenRemind(syntheticInvoice);
+    } catch (err: any) {
+      alert('Error sending reminder: ' + err?.message);
     }
   };
 
@@ -547,16 +516,156 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (data.success) {
+        setActionMessage('Marked invoice as Payment Received.');
         fetchDashboardData();
+        setTimeout(() => setActionMessage(null), 3000);
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      alert('Error updating invoice: ' + e?.message);
     }
   };
 
+  const handleConfirmPartialSettled = async () => {
+    if (!partialModal.invoice || !partialModal.amount) return;
+    const settledAmt = Number(partialModal.amount);
+    if (isNaN(settledAmt) || settledAmt <= 0) {
+      alert('Please enter a valid amount greater than ₹0');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/invoices/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: partialModal.invoice.id,
+          status: 'Partially Settled',
+          settledAmount: settledAmt,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage(`Recorded partial payment of ₹${settledAmt.toLocaleString('en-IN')}`);
+        setPartialModal({ isOpen: false, invoice: null, amount: '' });
+        fetchDashboardData();
+        setTimeout(() => setActionMessage(null), 3500);
+      } else {
+        alert(data.error || 'Failed to record partial settlement');
+      }
+    } catch (err: any) {
+      alert('Error: ' + err?.message);
+    }
+  };
+
+  // Batch Table Selection Logic
+  const handleToggleInvoiceSelect = (id: string) => {
+    const next = new Set(selectedInvoiceIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedInvoiceIds(next);
+  };
+
+  const handleSelectAllVisible = () => {
+    if (selectedInvoiceIds.size === allInvoices.length && allInvoices.length > 0) {
+      setSelectedInvoiceIds(new Set());
+    } else {
+      setSelectedInvoiceIds(new Set(allInvoices.map((inv: any) => inv.id)));
+    }
+  };
+
+  const handleBatchMarkPaid = async () => {
+    if (selectedInvoiceIds.size === 0) return;
+    if (!confirm(`Mark ${selectedInvoiceIds.size} selected invoice(s) as Payment Received?`)) return;
+
+    try {
+      setLoading(true);
+      for (const id of Array.from(selectedInvoiceIds)) {
+        await fetch('/api/invoices/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            invoiceId: id,
+            status: 'Payment Received',
+            notes: 'Batch marked as Payment Received from Dashboard',
+          }),
+        });
+      }
+      setSelectedInvoiceIds(new Set());
+      setActionMessage(`Successfully marked ${selectedInvoiceIds.size} invoice(s) as paid.`);
+      fetchDashboardData();
+      setTimeout(() => setActionMessage(null), 3500);
+    } catch (e: any) {
+      alert('Error updating invoices: ' + e?.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBatchSendSelectedReminders = () => {
+    if (selectedInvoiceIds.size === 0) return;
+
+    const selectedList = allInvoices.filter((inv: any) => selectedInvoiceIds.has(inv.id));
+
+    // Filter out credit notes and internal accounts
+    const actionableList = selectedList.filter((inv: any) => {
+      const isInternal =
+        inv.customer?.status === 'INTERNAL_MUTED' ||
+        inv.customer?.status === 'EXCLUDED' ||
+        inv.status === 'Internal / Muted' ||
+        inv.actionType === 'No Action' ||
+        inv.isExcluded;
+      const isCreditNote = inv.outstandingAmount <= 0 || inv.billAmount <= 0 || inv.status === 'Credit Note';
+      return !isInternal && !isCreditNote;
+    });
+
+    if (actionableList.length === 0) {
+      alert('Messaging disabled: All selected items are Credit Notes, advance balances, or internal/TDS bills.');
+      return;
+    }
+
+    // Check for customers without contacts
+    const withoutContacts = actionableList.filter((inv: any) => {
+      const c = inv.customer?.contacts?.find((x: any) => x.isPrimary) || inv.customer?.contacts?.[0];
+      return !c || (!c.mobileNumber && !c.whatsappNumber && !c.emailId);
+    });
+
+    const validCustomerIds = Array.from(
+      new Set(
+        actionableList
+          .filter((inv: any) => {
+            const c = inv.customer?.contacts?.find((x: any) => x.isPrimary) || inv.customer?.contacts?.[0];
+            return Boolean(c && (c.mobileNumber || c.whatsappNumber || c.emailId));
+          })
+          .map((inv: any) => inv.customerId)
+      )
+    );
+
+    if (validCustomerIds.length === 0) {
+      alert('None of the selected customer accounts have registered contact phone or email numbers. Please add contact info in Customer Contacts first.');
+      return;
+    }
+
+    if (withoutContacts.length > 0) {
+      alert(`Notice: ${withoutContacts.length} selected invoice(s) belong to customers with NO registered contacts and will be skipped. Reminders will only be prepared for customers with valid contacts.`);
+    }
+
+    // Open Approval Queue pre-selected with the valid customer IDs!
+    setSelectedQueueIds(new Set(validCustomerIds));
+    setShowApprovalQueue(true);
+    fetchApprovalQueue();
+  };
+
+  // Selected Invoices stats
+  const selectedStats = useMemo(() => {
+    const list = allInvoices.filter((inv: any) => selectedInvoiceIds.has(inv.id));
+    const totalDue = list.reduce((sum, inv) => sum + (inv.outstandingAmount > 0 ? inv.outstandingAmount : 0), 0);
+    const uniqueCustomers = new Set(list.map((inv: any) => inv.customerId)).size;
+    return { count: list.length, totalDue, uniqueCustomers };
+  }, [allInvoices, selectedInvoiceIds]);
+
   return (
-    <main className="px-[30px] pt-[27px] pb-10 max-w-[1600px] mx-auto w-full space-y-8">
-      {/* Welcome header with action buttons (demo-style) */}
+    <main className="px-[30px] pt-[27px] pb-10 max-w-[1600px] mx-auto w-full space-y-6">
+      {/* Welcome header with action buttons */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
         <div>
           <div className="flex items-center gap-2 mb-2">
@@ -569,10 +678,10 @@ export default function DashboardPage() {
             </span>
           </div>
           <h2 className="font-display text-[23px] font-semibold tracking-[-0.03em] text-[#3A3A3A] mb-1.5">
-            Receivables & Reminder Overview
+            Dashboard & Receivables Overview
           </h2>
           <p className="text-xs text-[#7a858d] max-w-xl">
-            Real-time aging analysis, daily SAP diff reconciliation, Promise-to-Pay commitments, and Groq AI messaging.
+            Real-time aging analysis, daily SAP diff reconciliation, multi-customer batch reminders, and Groq AI messaging.
           </p>
         </div>
 
@@ -588,8 +697,13 @@ export default function DashboardPage() {
           </button>
 
           <button
-            onClick={() => setShowUploadModal(true)}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-white border border-[#dfe6e9] text-[#59646c] text-[11px] font-semibold hover:bg-[#f7fcfc] hover:-translate-y-px transition"
+            onClick={() => {
+              setSelectedFiles([]);
+              setUploadMsg(null);
+              setShowUploadModal(true);
+            }}
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-white border border-[#dfe6e9] text-[#59646c] text-[11px] font-semibold hover:bg-[#f7fcfc] hover:-translate-y-px transition shadow-2xs"
+            title="Import daily SAP dues or customer contact sheets"
           >
             <Upload className="w-3.5 h-3.5 text-[#09AEB8]" />
             Import SAP Dues / Contacts
@@ -597,7 +711,8 @@ export default function DashboardPage() {
 
           <button
             onClick={handleOpenApprovalQueue}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-[#fff7dc] border border-[#ffe9a6] text-[#7a5d0c] text-[11px] font-semibold hover:brightness-95 hover:-translate-y-px transition"
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-[#fff7dc] border border-[#ffe9a6] text-[#7a5d0c] text-[11px] font-semibold hover:brightness-95 hover:-translate-y-px transition shadow-2xs"
+            title="Review and dispatch consolidated payment reminder digests"
           >
             <ListChecks className="w-3.5 h-3.5" />
             <span>Review Approval Queue</span>
@@ -619,7 +734,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Scheduled auto-dispatch status (reads the Automated reminders toggle from Settings) */}
+      {/* Scheduled auto-dispatch status */}
       {autoSchedule && (
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#68737c]">
           <span className={`status-pill ${autoSchedule.enabled ? 'status-paid' : 'status-hold'}`}>
@@ -638,9 +753,22 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* Action Notification Banner */}
+      {actionMessage && (
+        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{actionMessage}</span>
+          </div>
+          <button onClick={() => setActionMessage(null)} className="text-emerald-700 font-bold text-xs hover:underline">
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Auto-Check Notification Banner */}
       {autoCheckMsg && (
-        <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-medium flex items-center justify-between shadow-sm">
+        <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-medium flex items-center justify-between shadow-2xs">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
             <span>{autoCheckMsg}</span>
@@ -651,11 +779,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* KPI Cards Grid (demo-style: icon chip, Poppins value, trend line, mini progress bar) */}
+      {/* KPI Financial Overview Cards (1:1 Excel Match) */}
       {(() => {
         const pct = (n: number, d: number) => (d > 0 ? Math.min(100, Math.round((n / d) * 100)) : 0);
-        const totalCount = stats?.totalCount || 0;
-        const openCount = totalCount - (stats?.settledCount || 0);
         const cards = [
           {
             label: 'Total Bill Amount',
@@ -698,7 +824,7 @@ export default function DashboardPage() {
         return (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {cards.map((c) => (
-              <div key={c.label} className="bg-white p-[18px] rounded-[13px] border border-[#e7ecef] shadow">
+              <div key={c.label} className="bg-white p-[18px] rounded-[13px] border border-[#e7ecef] shadow-2xs">
                 <div className="flex items-center justify-between text-[#7d8990] text-[11px] font-medium">
                   <span>{c.label}</span>
                   <span className={`kpi-chip ${c.chip}`}>{c.icon}</span>
@@ -720,75 +846,179 @@ export default function DashboardPage() {
         );
       })()}
 
-      {/* Critical Action Items & Invoices List */}
-      <div className="bg-white rounded-[13px] border border-[#e7ecef] shadow overflow-hidden">
-        <div className="px-5 pt-[18px] pb-3.5 flex items-center justify-between">
+      {/* UNIFIED DUES & INVOICES LEDGER TABLE */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden space-y-4 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div>
-            <h3 className="font-display font-semibold text-[13px] text-[#3A3A3A]">
-              Priority Receivables & Overdue Watchlist
+            <h3 className="font-display font-semibold text-base text-[#3A3A3A] flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-[#09AEB8]" />
+              Invoices & Receivables Ledger
             </h3>
-            <p className="text-[10px] text-[#98a1a7] mt-1">
-              Bills requiring payment follow-up or with active Promise-to-Pay commitments.
+            <p className="text-xs text-slate-500 mt-0.5">
+              Full searchable ledger with all categories, multi-customer selection, Promise-to-Pay commitments, and one-click reminders.
             </p>
           </div>
-          <Link
-            href="/dues"
-            className="text-[11px] font-semibold text-[#0274BE] hover:underline flex items-center gap-1"
-          >
-            View All Invoices ({stats ? stats.totalCount : 0}) <ArrowUpRight className="w-3.5 h-3.5" />
-          </Link>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleOpenApprovalQueue()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition"
+            >
+              <ListChecks className="w-3.5 h-3.5" />
+              Batch Dispatch Queue ({queuedCount})
+            </button>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Filter Tabs and Search Bar */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold overflow-x-auto shadow-2xs">
+            {[
+              { id: 'ALL', label: 'All Ledger', count: stats?.totalCount },
+              { id: 'CUSTOMER_DUES', label: 'Customer Dues', count: stats?.tradeInvoiceCount },
+              { id: 'OVERDUE', label: 'Overdue', count: stats?.overdueCount },
+              { id: 'UPCOMING', label: 'Upcoming', count: stats?.upcomingCount },
+              { id: 'PARTIALLY_SETTLED', label: 'Partially Paid', count: stats?.partiallySettledCount },
+              { id: 'SETTLED', label: 'Settled', count: stats?.settledCount },
+              { id: 'CREDIT_NOTES', label: 'Credit Notes', count: stats?.creditNotesCount },
+              { id: 'INTERNAL', label: 'Internal & TDS (Muted)', count: stats?.internalCount },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setFilter(tab.id)}
+                className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 ${
+                  filter === tab.id
+                    ? 'bg-[#09AEB8] text-white shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+                }`}
+              >
+                <span>{tab.label}</span>
+                {typeof tab.count === 'number' && (
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                      filter === tab.id
+                        ? 'bg-white/20 text-white'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative w-full lg:w-72">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search customer, bill no, or contact..."
+              className="w-full text-xs pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-[#09AEB8] shadow-2xs"
+            />
+          </div>
+        </div>
+
+        {/* Batch Selection Banner */}
+        {selectedInvoiceIds.size > 0 && (
+          <div className="bg-[#e8f9fa] border border-[#b8ecef] p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-2xs">
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-[#078d96]">
+                {selectedStats.count} invoice{selectedStats.count > 1 ? 's' : ''} selected
+              </span>
+              <span className="text-slate-600">
+                across {selectedStats.uniqueCustomers} customer account(s) • Total Due:{' '}
+                <strong className="text-rose-600">₹{selectedStats.totalDue.toLocaleString('en-IN')}</strong>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBatchSendSelectedReminders}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#09AEB8] text-white text-xs font-bold hover:brightness-95 transition shadow-2xs"
+              >
+                <Send className="w-3.5 h-3.5" />
+                Send Reminders to Selected Customers
+              </button>
+
+              <button
+                onClick={handleBatchMarkPaid}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition shadow-2xs"
+              >
+                <Check className="w-3.5 h-3.5" />
+                Mark Paid
+              </button>
+
+              <button
+                onClick={() => setSelectedInvoiceIds(new Set())}
+                className="px-2.5 py-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-white text-xs font-semibold"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Ledger Table */}
+        <div className="overflow-x-auto border border-slate-100 rounded-xl">
           <table className="w-full text-left text-sm">
-            <thead className="border-y border-[#edf0f2]">
+            <thead className="bg-slate-50/80 text-slate-600 text-[11px] uppercase font-bold border-b border-slate-200 tracking-wider">
               <tr>
-                <th className="py-3 px-[18px]">Customer & Contacts</th>
-                <th className="py-3 px-[18px]">Bill No & Date</th>
-                <th className="py-3 px-[18px]">Bill Amount</th>
-                <th className="py-3 px-[18px]">Paid / Adjusted</th>
-                <th className="py-3 px-[18px] text-rose-600">Outstanding Due</th>
-                <th className="py-3 px-[18px]">Due Date & Commitment</th>
-                <th className="py-3 px-[18px]">Status</th>
-                <th className="py-3 px-[18px] text-right">Actions</th>
+                <th className="py-3 px-3 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    checked={allInvoices.length > 0 && selectedInvoiceIds.size === allInvoices.length}
+                    onChange={handleSelectAllVisible}
+                    title="Select / Deselect all in view"
+                    className="w-4 h-4 rounded text-[#09AEB8] focus:ring-[#09AEB8] border-slate-300 cursor-pointer"
+                  />
+                </th>
+                <th className="py-3 px-4">Customer & Contacts</th>
+                <th className="py-3 px-4">Bill No & Date</th>
+                <th className="py-3 px-4">Bill Amount</th>
+                <th className="py-3 px-4">Paid / Adjusted</th>
+                <th className="py-3 px-4 text-rose-600">Outstanding Due</th>
+                <th className="py-3 px-4">Due Date & Commitment</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">Loading receivables data...</td>
+                  <td colSpan={9} className="py-12 text-center text-slate-400">Loading ledger invoices...</td>
                 </tr>
-              ) : stats?.totalCount === 0 ? (
+              ) : allInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center">
-                    <div className="max-w-md mx-auto space-y-4">
-                      <div className="w-16 h-16 mx-auto rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                        <FileSpreadsheet className="w-8 h-8" />
-                      </div>
-                      <h4 className="text-base font-bold text-slate-900">No Excel Data Imported Yet</h4>
-                      <p className="text-xs text-slate-500 leading-relaxed">
-                        Upload your SAP Outstanding Receivable export or Customer Contact sheet to start tracking dues, managing multiple invoices, and running digest reminders.
+                  <td colSpan={9} className="py-16 text-center">
+                    <div className="max-w-md mx-auto space-y-3">
+                      <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300" />
+                      <p className="text-sm font-bold text-slate-700">No Records Found</p>
+                      <p className="text-xs text-slate-500">
+                        {filter === 'ALL' && !search
+                          ? 'Upload your SAP Outstanding Receivable export or Customer Contact sheet to get started.'
+                          : 'No invoices match the selected filter or search keyword.'}
                       </p>
                       <button
-                        onClick={() => setShowUploadModal(true)}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-xs shadow-md hover:bg-indigo-700 transition"
+                        onClick={() => {
+                          setSelectedFiles([]);
+                          setUploadMsg(null);
+                          setShowUploadModal(true);
+                        }}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#09AEB8] text-white text-xs font-bold shadow-2xs hover:brightness-95 transition mt-2"
                       >
-                        <Upload className="w-4 h-4" />
-                        Import SAP Dues / Contacts
+                        <Upload className="w-4 h-4" /> Import Excel
                       </button>
                     </div>
                   </td>
                 </tr>
-              ) : criticalDues.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
-                    No critical overdue bills at this moment. All receivables in good standing.
-                  </td>
-                </tr>
               ) : (
-                criticalDues.map((inv: any) => {
-                  const contact = inv.customer.contacts?.[0];
+                allInvoices.map((inv: any) => {
+                  const primaryContact = inv.customer?.contacts?.find((c: any) => c.isPrimary) || inv.customer?.contacts?.[0];
+                  const hasContactInfo = Boolean(primaryContact && (primaryContact.mobileNumber || primaryContact.whatsappNumber || primaryContact.emailId));
                   const commitment = inv.commitments && inv.commitments.length > 0 ? inv.commitments[0] : null;
+
                   const isInternalAccount =
                     inv.customer?.status === 'INTERNAL_MUTED' ||
                     inv.customer?.status === 'EXCLUDED' ||
@@ -797,36 +1027,56 @@ export default function DashboardPage() {
                     /sales return/i.test(inv.customer?.partyName || '') ||
                     /phonepe/i.test(inv.narration || '') ||
                     inv.status === 'Internal / Muted';
+
                   const isCreditNote = inv.outstandingAmount < 0 || inv.billAmount < 0 || inv.status === 'Credit Note';
                   const isExcludedAccount = inv.actionType === 'No Action' || inv.isExcluded || isInternalAccount || isCreditNote;
+                  const isSelected = selectedInvoiceIds.has(inv.id);
 
                   return (
-                    <tr key={inv.id} className="hover:bg-slate-50/70 transition">
+                    <tr key={inv.id} className={`hover:bg-slate-50/70 transition ${isSelected ? 'bg-cyan-50/30' : ''}`}>
+                      {/* Checkbox */}
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleInvoiceSelect(inv.id)}
+                          className="w-4 h-4 rounded text-[#09AEB8] focus:ring-[#09AEB8] border-slate-300 cursor-pointer"
+                        />
+                      </td>
+
                       {/* Customer */}
-                      <td className="py-3.5 px-[18px] font-medium text-[#3A3A3A]">
+                      <td className="py-3.5 px-4 font-medium text-[#3A3A3A]">
                         <div className="flex items-center gap-2.5">
-                          <div className="initials-chip">
-                            {(inv.customer.partyName || inv.customer.rawLedgerName || '?')
+                          <div className="initials-chip shrink-0">
+                            {(inv.customer?.partyName || inv.customer?.rawLedgerName || '?')
                               .split(/\s+/).filter(Boolean).slice(0, 2).map((w: string) => w[0]).join('').toUpperCase()}
                           </div>
                           <div>
-                            <div>
-                              <span className="font-semibold text-[12px]">{inv.customer.partyName || inv.customer.rawLedgerName}</span>
-                              {inv.customer.isFlagged && (
-                                <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">
-                                  <ShieldAlert className="w-3 h-3" /> Flagged
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-xs text-slate-900">{inv.customer?.partyName || inv.customer?.rawLedgerName}</span>
+                              {inv.customer?.isFlagged && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-100 text-rose-700">
+                                  <ShieldAlert className="w-2.5 h-2.5" /> Flagged
                                 </span>
                               )}
                             </div>
-                            <div className="text-[10px] text-[#9aa3aa] mt-0.5">
-                              {contact?.personName || 'Accounts'} • {contact?.mobileNumber || contact?.emailId || 'No direct contact'}
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              {hasContactInfo ? (
+                                <span>
+                                  {primaryContact?.personName || 'Accounts'} • {primaryContact?.mobileNumber || primaryContact?.whatsappNumber || primaryContact?.emailId}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                  <AlertTriangle className="w-2.5 h-2.5 text-amber-600" /> No direct contact
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
                       </td>
 
                       {/* Bill No & Date */}
-                      <td className="py-3.5 px-[18px] text-slate-700">
+                      <td className="py-3.5 px-4 text-slate-700">
                         <div className="font-semibold text-xs font-mono">{inv.billNo}</div>
                         <div className="text-[11px] text-slate-400">
                           {new Date(inv.billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
@@ -834,12 +1084,12 @@ export default function DashboardPage() {
                       </td>
 
                       {/* Bill Amount */}
-                      <td className="py-3.5 px-[18px] text-slate-700 font-medium">
+                      <td className="py-3.5 px-4 text-slate-700 font-medium text-xs">
                         ₹{inv.billAmount.toLocaleString('en-IN')}
                       </td>
 
                       {/* Paid / Adjusted */}
-                      <td className="py-3.5 px-[18px] text-emerald-700 font-medium">
+                      <td className="py-3.5 px-4 text-emerald-700 font-medium">
                         {(() => {
                           const isFullySettled =
                             inv.status === 'Closed' ||
@@ -858,9 +1108,9 @@ export default function DashboardPage() {
                               <>
                                 <div className="font-semibold text-xs">₹{paidVal.toLocaleString('en-IN')}</div>
                                 {isFullySettled ? (
-                                  <span className="text-[10px] text-emerald-600 font-bold block">Fully Settled</span>
+                                  <span className="text-[9px] text-emerald-600 font-bold block">Fully Settled</span>
                                 ) : (
-                                  <span className="text-[10px] text-teal-600 font-semibold block">Partially Settled</span>
+                                  <span className="text-[9px] text-teal-600 font-semibold block">Partially Settled</span>
                                 )}
                               </>
                             );
@@ -870,25 +1120,24 @@ export default function DashboardPage() {
                       </td>
 
                       {/* Outstanding Due */}
-                      <td className="py-3.5 px-[18px] font-bold text-slate-900">
-                        <span className="text-rose-600 font-black">
+                      <td className="py-3.5 px-4 font-bold text-slate-900">
+                        <span className={inv.outstandingAmount > 0 ? 'text-rose-600 font-black text-xs' : 'text-slate-600 font-medium text-xs'}>
                           ₹{inv.outstandingAmount.toLocaleString('en-IN')}
                         </span>
                       </td>
 
                       {/* Due Date & Commitment */}
-                      <td className="py-3.5 px-[18px]">
+                      <td className="py-3.5 px-4">
                         <div className="text-xs font-medium text-slate-800">
                           {new Date(inv.dueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                         </div>
-                        <div className="text-[11px] font-semibold text-rose-600 mt-0.5">
+                        <div className="text-[10px] font-semibold text-rose-600 mt-0.5">
                           {inv.daysOverdue > 0 ? `${inv.daysOverdue} days overdue` : 'Due soon'}
                         </div>
 
-                        {/* Promise to Pay Badge */}
                         {commitment && (
-                          <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                            <CalendarClock className="w-3 h-3 text-amber-600 shrink-0" />
+                          <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                            <CalendarClock className="w-2.5 h-2.5 text-amber-600 shrink-0" />
                             <span>
                               Promised ₹{commitment.promisedAmount.toLocaleString('en-IN')} on{' '}
                               {new Date(commitment.promisedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
@@ -898,20 +1147,20 @@ export default function DashboardPage() {
                       </td>
 
                       {/* Status */}
-                      <td className="py-3.5 px-[18px]">
+                      <td className="py-3.5 px-4">
                         {isInternalAccount ? (
-                          <span className="px-2 py-1 rounded text-[11px] font-bold bg-purple-50 text-purple-800 border border-purple-200 inline-block">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200 inline-block">
                             Internal / TDS (Muted)
                           </span>
                         ) : isCreditNote ? (
-                          <span className="px-2 py-1 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 inline-block">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 inline-block">
                             Credit Note (Cr)
                           </span>
                         ) : (
                           <span className={`status-pill ${
-                            inv.status === 'Payment Received' || inv.status === 'Closed'
+                            inv.status === 'Payment Received' || inv.status === 'Settled' || inv.status === 'Closed'
                               ? 'status-paid'
-                              : inv.status === 'Partially Paid'
+                              : inv.status === 'Partially Paid' || inv.status === 'Partially Settled'
                               ? 'status-upcoming'
                               : inv.daysOverdue > 0
                               ? 'status-overdue'
@@ -923,33 +1172,49 @@ export default function DashboardPage() {
                       </td>
 
                       {/* Actions */}
-                      <td className="py-3.5 px-[18px] text-right">
+                      <td className="py-3.5 px-4 text-right">
                         {isInternalAccount ? (
-                          <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2.5 py-1.5 rounded-lg border border-purple-200 inline-block">
-                            Internal / TDS (Muted)
+                          <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-1 rounded-lg border border-purple-200 inline-block">
+                            Muted
                           </span>
                         ) : isCreditNote ? (
-                          <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200 inline-block">
-                            Credit Note (Cr)
+                          <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 inline-block">
+                            Credit Note
                           </span>
                         ) : isExcludedAccount ? (
-                          <span className="text-[11px] font-semibold text-slate-400 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 inline-block">
-                            Excluded (No Reminders)
+                          <span className="text-[10px] font-semibold text-slate-400 italic bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 inline-block">
+                            Excluded
                           </span>
                         ) : (
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => handleQuickMarkPaid(inv.id)}
                               title="Mark Payment Received"
-                              className="px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 transition"
+                              className="px-2 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-[11px] font-bold hover:bg-emerald-100 transition"
                             >
                               Mark Paid
                             </button>
+
+                            <button
+                              onClick={() => {
+                                setPartialModal({
+                                  isOpen: true,
+                                  invoice: inv,
+                                  amount: String(Math.round(inv.outstandingAmount / 2)),
+                                });
+                              }}
+                              title="Record Partial Payment"
+                              className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-[11px] font-semibold hover:bg-slate-50 transition"
+                            >
+                              Partial
+                            </button>
+
                             <button
                               onClick={() => handleOpenRemind(inv)}
-                              className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs"
+                              className="px-2.5 py-1 rounded-lg bg-[#09AEB8] text-white text-[11px] font-bold hover:brightness-95 transition flex items-center gap-1 shadow-2xs"
+                              title="Send WhatsApp, SMS or Email payment reminder"
                             >
-                              <Send className="w-3.5 h-3.5" /> Remind
+                              <Send className="w-3 h-3" /> Remind
                             </button>
                           </div>
                         )}
@@ -963,18 +1228,84 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Manual Remind Modal with Groq AI Support */}
+      {/* Partial Settlement Modal */}
+      {partialModal.isOpen && partialModal.invoice && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-base text-slate-900">Record Partial Payment</h3>
+              <button
+                onClick={() => setPartialModal({ isOpen: false, invoice: null, amount: '' })}
+                className="text-slate-400 hover:text-slate-600 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-600 space-y-2">
+              <div className="flex justify-between">
+                <span>Party:</span>
+                <strong className="text-slate-900">{partialModal.invoice.customer?.partyName || partialModal.invoice.customer?.rawLedgerName}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span>Bill Number:</span>
+                <strong className="font-mono text-slate-900">{partialModal.invoice.billNo}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span>Total Bill Amount:</span>
+                <span className="font-bold">₹{partialModal.invoice.billAmount.toLocaleString('en-IN')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Current Outstanding Due:</span>
+                <span className="font-bold text-rose-600">₹{partialModal.invoice.outstandingAmount.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                Amount Received (₹)
+              </label>
+              <input
+                type="number"
+                value={partialModal.amount}
+                onChange={(e) => setPartialModal({ ...partialModal, amount: e.target.value })}
+                placeholder="Enter amount collected..."
+                className="w-full text-sm p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8] font-bold text-slate-900"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPartialModal({ isOpen: false, invoice: null, amount: '' })}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPartialSettled}
+                className="px-4 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl shadow-2xs"
+              >
+                Record Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Remind Modal with Strict Contact Check */}
       {showRemindModal && selectedInvoice && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Send className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-bold text-base text-slate-900">
-                  Send Payment Reminder
-                </h3>
+              <div>
+                <h3 className="font-bold text-base text-slate-900">Send Payment Reminder</h3>
+                <p className="text-[11px] text-slate-500">
+                  {selectedInvoice.customer?.partyName || selectedInvoice.customer?.rawLedgerName} • Bill {selectedInvoice.billNo}
+                </p>
               </div>
-              <button
+              <button 
                 onClick={() => setShowRemindModal(false)}
                 className="text-slate-400 hover:text-slate-600 font-bold"
               >
@@ -982,208 +1313,199 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Customer:</span>
-                <span className="font-bold text-slate-900">
-                  {selectedInvoice.customer.partyName || selectedInvoice.customer.rawLedgerName}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Bill Number:</span>
-                <span className="font-bold font-mono text-indigo-600">{selectedInvoice.billNo}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Outstanding Due:</span>
-                <span className="font-bold text-rose-600">₹{selectedInvoice.outstandingAmount.toLocaleString('en-IN')}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Due Date:</span>
-                <span className="font-medium text-slate-700">
-                  {new Date(selectedInvoice.dueDate).toLocaleDateString('en-IN')} ({selectedInvoice.daysOverdue} days overdue)
-                </span>
-              </div>
-            </div>
+            {/* Strict Contact Details Verification */}
+            {(() => {
+              const primaryContact = selectedInvoice.customer?.contacts?.find((c: any) => c.isPrimary) || selectedInvoice.customer?.contacts?.[0];
+              const hasPhone = Boolean(primaryContact?.mobileNumber || primaryContact?.whatsappNumber);
+              const hasEmail = Boolean(primaryContact?.emailId);
+              const hasValidContact = Boolean(primaryContact && (hasPhone || hasEmail));
+              const hasRecipientForChannel = remindChannel === 'EMAIL' ? hasEmail : hasPhone;
 
-            {/* Channel Selection */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                Choose Dispatch Channel
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleRemindChannelChange('WHATSAPP')}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
-                    remindChannel === 'WHATSAPP'
-                      ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20 shadow-xs'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <Phone className="w-3.5 h-3.5" /> WhatsApp
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRemindChannelChange('SMS')}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
-                    remindChannel === 'SMS'
-                      ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20 shadow-xs'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <Send className="w-3.5 h-3.5" /> SMS Text
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRemindChannelChange('EMAIL')}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
-                    remindChannel === 'EMAIL'
-                      ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-500/20 shadow-xs'
-                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <Mail className="w-3.5 h-3.5" /> Email
-                </button>
-              </div>
-            </div>
+              return (
+                <div className="space-y-3">
+                  {!hasValidContact ? (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs font-semibold flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>No contact details found for this customer. Reminders cannot be sent without a registered mobile number or email.</span>
+                      </div>
+                      <Link href="/customers" className="underline text-rose-900 font-bold ml-2 shrink-0">
+                        Add Contact →
+                      </Link>
+                    </div>
+                  ) : !hasRecipientForChannel ? (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs font-semibold flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>No {remindChannel === 'EMAIL' ? 'email address' : 'mobile number'} found for {primaryContact?.personName || 'this contact'}.</span>
+                      </div>
+                      <Link href="/customers" className="underline text-amber-900 font-bold ml-2 shrink-0">
+                        Update Contact →
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-slate-500">Registered Contact:</span>
+                        <span className="font-bold text-slate-900 font-mono">
+                          {primaryContact?.personName || 'Accounts'} ({remindChannel === 'EMAIL' ? primaryContact?.emailId : (primaryContact?.mobileNumber || primaryContact?.whatsappNumber)})
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-amber-700 font-medium">
+                        <span>Safe Test Routing:</span>
+                        <span>Redirected to {remindChannel === 'EMAIL' ? 'jayesh@zuigo.ai' : '+918530383141'}</span>
+                      </div>
+                    </div>
+                  )}
 
-            {/* Language Selector */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Reminder Language
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'English', label: 'English' },
-                  { id: 'Hindi', label: 'हिन्दी' },
-                  { id: 'Marathi', label: 'मराठी' },
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleRemindLanguageChange(item.id)}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
-                      remindLanguage === item.id
-                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20 shadow-xs'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+                  {/* Channel Selection */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Delivery Channel
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['WHATSAPP', 'SMS', 'EMAIL'] as const).map((ch) => (
+                        <button
+                          key={ch}
+                          type="button"
+                          onClick={() => handleRemindChannelChange(ch)}
+                          className={`p-2 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${
+                            remindChannel === ch
+                              ? ch === 'WHATSAPP'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-400'
+                                : ch === 'SMS'
+                                ? 'bg-indigo-50 text-indigo-800 border-indigo-400'
+                                : 'bg-sky-50 text-sky-800 border-sky-400'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          {ch === 'WHATSAPP' && <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />}
+                          {ch === 'SMS' && <Phone className="w-3.5 h-3.5 text-indigo-600" />}
+                          {ch === 'EMAIL' && <Mail className="w-3.5 h-3.5 text-sky-600" />}
+                          <span>{ch === 'WHATSAPP' ? 'WhatsApp' : ch === 'SMS' ? 'SMS' : 'Email'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-            {/* Template Preset Dropdown */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
-                <span>Message Template</span>
-                <span className="text-[10px] text-indigo-600 font-semibold">Synced from Settings</span>
-              </label>
-              <select
-                value={selectedTemplateId}
-                onChange={(e) => handleTemplateDropdownChange(e.target.value)}
-                className="w-full text-xs font-semibold py-2 px-3 rounded-xl border border-slate-200 bg-white hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
-              >
-                {templates
-                  .filter((t) => t.channel === remindChannel && t.language === remindLanguage)
-                  .map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                {templates.filter((t) => t.channel === remindChannel && t.language === remindLanguage).length === 0 && (
-                  <option value="">Default {remindChannel} Template</option>
-                )}
-              </select>
-            </div>
+                  {/* Language Selector */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Language
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['English', 'Hindi', 'Marathi'].map((lang) => (
+                        <button
+                          key={lang}
+                          type="button"
+                          onClick={() => handleRemindLanguageChange(lang)}
+                          className={`p-2 rounded-xl text-xs font-semibold border transition ${
+                            remindLanguage === lang
+                              ? 'bg-[#09AEB8] text-white border-[#09AEB8]'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          {lang === 'Hindi' ? 'हिंदी (Hindi)' : lang === 'Marathi' ? 'मराठी (Marathi)' : 'English'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-            {remindChannel === 'EMAIL' && (
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Email Subject Line
-                </label>
-                <input
-                  type="text"
-                  value={remindSubject}
-                  onChange={(e) => setRemindSubject(e.target.value)}
-                  placeholder="Email subject..."
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-                />
-              </div>
-            )}
+                  {/* Template Selection */}
+                  {templates.filter((t) => t.channel === remindChannel).length > 0 && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                        Message Template
+                      </label>
+                      <select
+                        value={selectedTemplateId}
+                        onChange={(e) => handleTemplateDropdownChange(e.target.value)}
+                        className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-[#09AEB8] font-medium"
+                      >
+                        <option value="">Auto-Select Best Matching Template</option>
+                        {templates
+                          .filter((t) => t.channel === remindChannel)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name} ({t.category} - {t.language})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
 
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Reminder Message Content
-                </label>
-                <span className="text-[11px] text-slate-400 font-medium">Pre-populated from template & editable</span>
-              </div>
-              <textarea
-                value={customRemindMessage}
-                onChange={(e) => setCustomRemindMessage(e.target.value)}
-                placeholder="Type or edit reminder message..."
-                rows={7}
-                className="w-full text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-sans leading-relaxed"
-              />
-            </div>
+                  {remindChannel === 'EMAIL' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                        Email Subject Line
+                      </label>
+                      <input
+                        type="text"
+                        value={remindSubject}
+                        onChange={(e) => setRemindSubject(e.target.value)}
+                        placeholder="Email subject..."
+                        className="w-full text-xs p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8] font-medium"
+                      />
+                    </div>
+                  )}
 
-            {/* Destination notice */}
-            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-slate-500">Intended Customer:</span>
-                <span className="font-bold text-slate-900 font-mono">
-                  {remindChannel === 'EMAIL'
-                    ? selectedInvoice?.customer?.contacts?.[0]?.emailId || 'Registered Contact Email'
-                    : selectedInvoice?.customer?.contacts?.[0]?.mobileNumber ||
-                      selectedInvoice?.customer?.contacts?.[0]?.whatsappNumber ||
-                      'Registered Contact Mobile'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[10px] text-amber-700 font-medium">
-                <span>Safe Test Routing:</span>
-                <span>Redirected to {remindChannel === 'EMAIL' ? 'jayesh@zuigo.ai' : '+918530383141'}</span>
-              </div>
-            </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Reminder Message Content
+                      </label>
+                      <span className="text-[11px] text-slate-400 font-medium">Pre-populated & editable</span>
+                    </div>
+                    <textarea
+                      value={customRemindMessage}
+                      onChange={(e) => setCustomRemindMessage(e.target.value)}
+                      placeholder="Type or edit reminder message..."
+                      rows={6}
+                      className="w-full text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#09AEB8] font-sans leading-relaxed"
+                    />
+                  </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setShowRemindModal(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSendReminder}
-                className={`px-5 py-2.5 text-xs font-bold text-white rounded-xl shadow-md transition flex items-center gap-2 ${
-                  remindChannel === 'WHATSAPP'
-                    ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : remindChannel === 'SMS'
-                    ? 'bg-indigo-600 hover:bg-indigo-700'
-                    : 'bg-sky-600 hover:bg-sky-700'
-                }`}
-              >
-                <Send className="w-3.5 h-3.5" />
-                {remindChannel === 'WHATSAPP' && 'Open WhatsApp & Send Reminder'}
-                {remindChannel === 'SMS' && 'Send SMS Text Reminder'}
-                {remindChannel === 'EMAIL' && 'Send Email Reminder & Log'}
-              </button>
-            </div>
+                  <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowRemindModal(false)}
+                      className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!hasRecipientForChannel}
+                      onClick={handleSendReminder}
+                      className={`px-5 py-2.5 text-xs font-bold text-white rounded-xl shadow-2xs transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${
+                        remindChannel === 'WHATSAPP'
+                          ? 'bg-emerald-600 hover:bg-emerald-700'
+                          : remindChannel === 'SMS'
+                          ? 'bg-indigo-600 hover:bg-indigo-700'
+                          : 'bg-sky-600 hover:bg-sky-700'
+                      }`}
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      {remindChannel === 'WHATSAPP' && 'Open WhatsApp & Send Reminder'}
+                      {remindChannel === 'SMS' && 'Send SMS Text Reminder'}
+                      {remindChannel === 'EMAIL' && 'Send Email Reminder & Log'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
 
-      {/* Real Excel / SAP File Upload Modal */}
+      {/* DEDICATED EXCEL IMPORT MODAL (Separate options for SAP Dues vs Customer Contacts vs Both) */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2 text-indigo-600">
+              <div className="flex items-center gap-2 text-[#09AEB8]">
                 <FileSpreadsheet className="w-6 h-6" />
-                <h3 className="font-bold text-base text-slate-900">Import SAP Dues / Contacts</h3>
+                <h3 className="font-bold text-base text-slate-900">Import Excel Data</h3>
               </div>
               <button 
                 onClick={() => setShowUploadModal(false)}
@@ -1193,9 +1515,93 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Upload your daily SAP Outstanding Receivable export and/or Customer Contact master. <strong>You can select or drag both files at once</strong>; contacts are mapped first, dues reconciled second, and autonomous reminders triggered automatically.
-            </p>
+            {/* Separate Option Selector Tabs */}
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadTab('SAP_DUES');
+                  setSelectedFiles([]);
+                  setUploadMsg(null);
+                }}
+                className={`flex-1 py-1.5 px-3 rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  uploadTab === 'SAP_DUES'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>SAP Dues Excel</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadTab('CUSTOMER_CONTACTS');
+                  setSelectedFiles([]);
+                  setUploadMsg(null);
+                }}
+                className={`flex-1 py-1.5 px-3 rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  uploadTab === 'CUSTOMER_CONTACTS'
+                    ? 'bg-white text-sky-700 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Customer Contacts</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadTab('BOTH');
+                  setSelectedFiles([]);
+                  setUploadMsg(null);
+                }}
+                className={`flex-1 py-1.5 px-3 rounded-lg transition flex items-center justify-center gap-1.5 ${
+                  uploadTab === 'BOTH'
+                    ? 'bg-white text-purple-700 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Dual Import</span>
+              </button>
+            </div>
+
+            {/* Mode-specific guidance */}
+            {uploadTab === 'SAP_DUES' && (
+              <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 text-xs text-indigo-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-indigo-800">
+                  <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Daily SAP Outstanding Receivable Export
+                </div>
+                <p className="text-[11px] text-indigo-700">
+                  Upload daily SAP sales dues export. Requires columns: <strong>Ledger Code</strong>, <strong>Doc. No.</strong>, <strong>Bill Amount</strong>, <strong>Balance/Outstanding</strong>, <strong>Due Date</strong>.
+                </p>
+              </div>
+            )}
+
+            {uploadTab === 'CUSTOMER_CONTACTS' && (
+              <div className="bg-sky-50/70 border border-sky-100 rounded-xl p-3 text-xs text-sky-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-sky-800">
+                  <Users className="w-4 h-4 text-sky-600" /> Customer Contacts Master Sheet
+                </div>
+                <p className="text-[11px] text-sky-700">
+                  Upload master contacts mapping. Expected columns: <strong>Customer Name / Raw Ledger Name</strong> or <strong>Ledger Code</strong>, <strong>Contact Person</strong>, <strong>Mobile / WhatsApp</strong>, <strong>Email ID</strong>.
+                </p>
+              </div>
+            )}
+
+            {uploadTab === 'BOTH' && (
+              <div className="bg-purple-50/70 border border-purple-100 rounded-xl p-3 text-xs text-purple-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-purple-800">
+                  <Layers className="w-4 h-4 text-purple-600" /> Simultaneous Multi-File Import
+                </div>
+                <p className="text-[11px] text-purple-700">
+                  Drag or select both SAP Dues export and Customer Contacts Excel together. Contacts are mapped first, dues reconciled second.
+                </p>
+              </div>
+            )}
 
             <form onSubmit={handleUploadSubmit} className="space-y-4">
               <div
@@ -1214,8 +1620,8 @@ export default function DashboardPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  multiple
-                  accept=".xlsx, .xls, .csv, .html"
+                  multiple={uploadTab === 'BOTH'}
+                  accept={uploadTab === 'CUSTOMER_CONTACTS' ? '.xlsx, .xls, .csv' : '.xlsx, .xls, .csv, .html'}
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -1232,15 +1638,20 @@ export default function DashboardPage() {
                         </span>
                       ))}
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-1">Click or drag more files to replace</p>
+                    <p className="text-[10px] text-slate-400 mt-1">Click to select different file(s)</p>
                   </div>
                 ) : (
                   <div>
-                    <p className="text-xs font-bold text-slate-700">Click to choose file(s) or drag & drop</p>
-                    <p className="text-[11px] text-indigo-600 font-semibold mt-1">
-                      💡 Pro-Tip: You can select both SAP Dues (.xls) and Contact Sheet (.xlsx) together!
+                    <p className="text-xs font-bold text-slate-700">
+                      {uploadTab === 'SAP_DUES'
+                        ? 'Click to select SAP Outstanding Receivable file'
+                        : uploadTab === 'CUSTOMER_CONTACTS'
+                        ? 'Click to select Customer Contacts file'
+                        : 'Click to select or drop both Excel files'}
                     </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Supports SAP ALV HTML, Excel (.xlsx/.xls), and CSV</p>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Supports Excel (.xlsx, .xls) and CSV (and SAP ALV HTML for Dues)
+                    </p>
                   </div>
                 )}
               </div>
@@ -1266,20 +1677,22 @@ export default function DashboardPage() {
                 <button
                   type="submit"
                   disabled={uploading || selectedFiles.length === 0}
-                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 shadow-md transition flex items-center gap-1.5"
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#09AEB8] text-white hover:brightness-95 disabled:opacity-50 shadow-2xs transition flex items-center gap-1.5"
                 >
                   {uploading ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Processing & Reconciling...</span>
+                      <span>Ingesting & Reconciling...</span>
                     </>
                   ) : (
                     <>
                       <Upload className="w-3.5 h-3.5" />
                       <span>
-                        {selectedFiles.length > 1
-                          ? `Ingest Both ${selectedFiles.length} Files Simultaneously`
-                          : 'Ingest & Reconcile with DB'}
+                        {uploadTab === 'SAP_DUES'
+                          ? 'Import SAP Dues'
+                          : uploadTab === 'CUSTOMER_CONTACTS'
+                          ? 'Import Customer Contacts'
+                          : `Ingest ${selectedFiles.length} File(s)`}
                       </span>
                     </>
                   )}
@@ -1290,9 +1703,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Approval Queue Modal (Semi-Automated Dispatch Mode) */}
+      {/* APPROVAL QUEUE MODAL (Semi-Automated Dispatch Mode) */}
       {showApprovalQueue && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
@@ -1308,7 +1721,7 @@ export default function DashboardPage() {
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Review consolidated digests before dispatching. Exclude or pause sensitive customer accounts with one click.
+                    Review consolidated digests before dispatching. Accounts with no contacts are strictly blocked from messaging.
                   </p>
                 </div>
               </div>
@@ -1341,14 +1754,10 @@ export default function DashboardPage() {
                 return true;
               });
 
-              const allInViewSelected = displayedQueueItems.length > 0 && displayedQueueItems.every(i => selectedQueueIds.has(i.customerId));
+              const allInViewSelected = displayedQueueItems.length > 0 && displayedQueueItems.filter(i => i.hasContacts).every(i => selectedQueueIds.has(i.customerId));
               const selectedEligibleCount = Array.from(selectedQueueIds).filter(id => {
                 const item = queuedItems.find(q => q.customerId === id);
                 return item && isItemEligible(item);
-              }).length;
-              const selectedMissingCount = Array.from(selectedQueueIds).filter(id => {
-                const item = queuedItems.find(q => q.customerId === id);
-                return item && !item.hasContacts;
               }).length;
 
               return (
@@ -1376,7 +1785,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={handleSelectEligibleOnly}
-                        className="px-3 py-1.5 rounded-lg bg-purple-50 border border-purple-200 font-bold text-purple-700 hover:bg-purple-100 transition shadow-xs flex items-center gap-1.5"
+                        className="px-3 py-1.5 rounded-lg bg-purple-50 border border-purple-200 font-bold text-purple-700 hover:bg-purple-100 transition shadow-2xs flex items-center gap-1.5"
                       >
                         <Check className="w-3.5 h-3.5" />
                         Select Ready to Send ({eligibleItems.length})
@@ -1384,7 +1793,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={() => handleToggleSelectAllInView(displayedQueueItems)}
-                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 font-semibold text-slate-700 hover:bg-slate-100 transition shadow-xs"
+                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs"
                       >
                         {allInViewSelected ? 'Deselect View' : 'Select All in View'}
                       </button>
@@ -1397,204 +1806,163 @@ export default function DashboardPage() {
                           Clear Selection
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={fetchApprovalQueue}
-                        disabled={loadingQueue}
-                        className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
-                        title="Refresh Queue"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${loadingQueue ? 'animate-spin' : ''}`} />
-                      </button>
                     </div>
                   </div>
 
-                  {/* Filter Tabs Bar */}
-                  <div className="px-6 py-2 border-b border-slate-100 flex items-center gap-2 bg-white text-xs shrink-0 overflow-x-auto">
-                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mr-1">Filter View:</span>
-                    <button
-                      type="button"
-                      onClick={() => setQueueFilter('ALL')}
-                      className={`px-2.5 py-1 rounded-lg font-bold transition ${
-                        queueFilter === 'ALL'
-                          ? 'bg-[#09AEB8] text-white shadow-xs'
-                          : 'text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      All Accounts ({queuedItems.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQueueFilter('ELIGIBLE')}
-                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
-                        queueFilter === 'ELIGIBLE'
-                          ? 'bg-purple-600 text-white shadow-xs'
-                          : 'text-purple-700 hover:bg-purple-50'
-                      }`}
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      Ready to Send ({eligibleItems.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQueueFilter('MISSING_CONTACTS')}
-                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
-                        queueFilter === 'MISSING_CONTACTS'
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : 'text-amber-700 hover:bg-amber-50'
-                      }`}
-                    >
-                      <AlertCircle className="w-3.5 h-3.5" />
-                      Missing Contacts ({missingContactsItems.length})
-                    </button>
-                    {sentTodayItems.length > 0 && (
+                  {/* Filter Subtabs */}
+                  <div className="px-6 py-2 border-b border-slate-100 bg-white flex items-center gap-2 shrink-0 text-xs">
+                    <span className="text-slate-400 font-medium">Show:</span>
+                    {[
+                      { id: 'ALL', label: `All (${queuedItems.length})` },
+                      { id: 'ELIGIBLE', label: `Ready to Send (${eligibleItems.length})` },
+                      { id: 'MISSING_CONTACTS', label: `Missing Contacts (${missingContactsItems.length})` },
+                      { id: 'SENT_TODAY', label: `Already Sent Today (${sentTodayItems.length})` },
+                    ].map((f) => (
                       <button
+                        key={f.id}
                         type="button"
-                        onClick={() => setQueueFilter('SENT_TODAY')}
-                        className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
-                          queueFilter === 'SENT_TODAY'
-                            ? 'bg-emerald-600 text-white shadow-xs'
-                            : 'text-emerald-700 hover:bg-emerald-50'
+                        onClick={() => setQueueFilter(f.id as any)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                          queueFilter === f.id
+                            ? 'bg-purple-600 text-white font-bold'
+                            : 'text-slate-600 hover:bg-slate-100'
                         }`}
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Sent Today ({sentTodayItems.length})
+                        {f.label}
                       </button>
-                    )}
+                    ))}
                   </div>
 
-                  {/* Queue Table */}
-                  <div className="overflow-y-auto flex-1 p-6">
+                  {/* Queue Items List */}
+                  <div className="flex-1 overflow-y-auto p-6 space-y-3">
                     {loadingQueue ? (
-                      <div className="py-16 text-center text-slate-400">Loading queued reminders...</div>
+                      <div className="py-16 text-center text-slate-400">Loading pending digests...</div>
                     ) : displayedQueueItems.length === 0 ? (
-                      <div className="py-16 text-center text-slate-500">
-                        <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-                        <p className="font-bold text-sm text-slate-800">No customer accounts in this view</p>
-                        <p className="text-xs text-slate-400 mt-1">Try switching to &quot;All Accounts&quot; to review the complete queue.</p>
+                      <div className="py-16 text-center text-slate-400">
+                        <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+                        <p className="font-bold text-slate-700">No customers pending in this view.</p>
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        {displayedQueueItems.map((item) => {
-                          const isSelected = selectedQueueIds.has(item.customerId);
-                          const isEligible = isItemEligible(item);
-                          const sentChannels = [
-                            item.alreadySentToday?.whatsapp && 'WhatsApp',
-                            item.alreadySentToday?.sms && 'SMS',
-                            item.alreadySentToday?.email && 'Email',
-                          ].filter(Boolean);
+                      displayedQueueItems.map((item: any) => {
+                        const isSelected = selectedQueueIds.has(item.customerId);
+                        const isEligible = isItemEligible(item);
+                        const sentChannels = [];
+                        if (item.alreadySentToday?.whatsapp) sentChannels.push('WhatsApp');
+                        if (item.alreadySentToday?.sms) sentChannels.push('SMS');
+                        if (item.alreadySentToday?.email) sentChannels.push('Email');
 
-                          return (
-                            <div
-                              key={item.customerId}
-                              onClick={() => handleToggleQueueSelect(item.customerId)}
-                              className={`p-4 rounded-2xl border transition cursor-pointer select-none ${
-                                isSelected
-                                  ? 'bg-purple-50/70 border-purple-300 shadow-sm ring-1 ring-purple-200'
-                                  : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/60'
-                              }`}
-                            >
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                <div className="flex items-start gap-3">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleToggleQueueSelect(item.customerId);
-                                    }}
-                                    className={`mt-1 text-slate-400 transition hover:scale-110 ${
-                                      isSelected ? 'text-purple-600' : 'hover:text-slate-600'
-                                    }`}
-                                    title={isSelected ? 'Deselect customer' : 'Select customer for dispatch'}
-                                  >
-                                    {isSelected ? (
-                                      <CheckSquare className="w-5 h-5 text-purple-600 fill-purple-50" />
-                                    ) : (
-                                      <Square className="w-5 h-5 text-slate-400" />
-                                    )}
-                                  </button>
+                        return (
+                          <div
+                            key={item.customerId}
+                            onClick={() => {
+                              if (item.hasContacts) handleToggleQueueSelect(item.customerId);
+                            }}
+                            className={`p-4 rounded-xl border transition cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                              !item.hasContacts
+                                ? 'bg-amber-50/40 border-amber-200 opacity-80 cursor-not-allowed'
+                                : isSelected
+                                ? 'bg-purple-50/60 border-purple-300 shadow-2xs'
+                                : 'bg-white border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <button
+                                type="button"
+                                disabled={!item.hasContacts}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleQueueSelect(item.customerId);
+                                }}
+                                className={`mt-1 text-slate-400 transition ${
+                                  !item.hasContacts ? 'opacity-40 cursor-not-allowed' : isSelected ? 'text-purple-600' : 'hover:text-slate-600'
+                                }`}
+                              >
+                                {isSelected ? (
+                                  <CheckSquare className="w-5 h-5 text-purple-600 fill-purple-50" />
+                                ) : (
+                                  <Square className="w-5 h-5 text-slate-400" />
+                                )}
+                              </button>
 
-                                  <div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <h4 className="font-bold text-slate-900 text-sm">
-                                        {item.partyName}
-                                      </h4>
-                                      {!item.hasContacts ? (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 flex items-center gap-1 border border-amber-200">
-                                          <AlertCircle className="w-3 h-3 text-amber-600" />
-                                          Missing Contacts
-                                        </span>
-                                      ) : isEligible ? (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                                          Ready to Send
-                                        </span>
-                                      ) : null}
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h4 className="font-bold text-slate-900 text-sm">
+                                    {item.partyName}
+                                  </h4>
+                                  {!item.hasContacts ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 flex items-center gap-1 border border-amber-200">
+                                      <AlertCircle className="w-3 h-3 text-amber-600" />
+                                      Missing Contacts (Cannot Remind)
+                                    </span>
+                                  ) : isEligible ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                      Ready to Send
+                                    </span>
+                                  ) : null}
 
-                                      {!item.reminderEnabled && (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                          Reminders Paused
-                                        </span>
-                                      )}
+                                  {!item.reminderEnabled && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                      Reminders Paused
+                                    </span>
+                                  )}
 
-                                      {sentChannels.length > 0 && (
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1 border border-emerald-200">
-                                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                          Sent Today ({sentChannels.join(', ')})
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-mono mt-1">
-                                      <span>Ledger: {item.ledgerCode}</span>
-                                      <span>•</span>
-                                      <span>Contact: <strong className="text-slate-700 font-sans">{item.contactPerson}</strong></span>
-                                      {item.mobileNumber && (
-                                        <>
-                                          <span>•</span>
-                                          <span className="flex items-center gap-1">
-                                            <Phone className="w-3 h-3 text-slate-400" /> {item.mobileNumber}
-                                          </span>
-                                        </>
-                                      )}
-                                      {item.emailId && (
-                                        <>
-                                          <span>•</span>
-                                          <span className="flex items-center gap-1">
-                                            <Mail className="w-3 h-3 text-slate-400" /> {item.emailId}
-                                          </span>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
+                                  {sentChannels.length > 0 && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1 border border-emerald-200">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      Sent Today ({sentChannels.join(', ')})
+                                    </span>
+                                  )}
                                 </div>
 
-                                <div className="flex items-center gap-4 sm:text-right shrink-0">
-                                  <div>
-                                    <div className="font-extrabold text-slate-900 text-base">
-                                      ₹{item.totalDue.toLocaleString('en-IN')}
-                                    </div>
-                                    <div className="text-[11px] text-slate-500">
-                                      {item.invoicesCount} open bill(s)
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setInspectMessage(item);
-                                    }}
-                                    className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-sm transition"
-                                  >
-                                    <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                                    <span>Preview Digest</span>
-                                  </button>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-mono mt-1">
+                                  <span>Ledger: {item.ledgerCode}</span>
+                                  <span>•</span>
+                                  <span>Contact: <strong className="text-slate-700 font-sans">{item.contactPerson}</strong></span>
+                                  {item.mobileNumber && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="flex items-center gap-1">
+                                        <Phone className="w-3 h-3 text-slate-400" /> {item.mobileNumber}
+                                      </span>
+                                    </>
+                                  )}
+                                  {item.emailId && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="flex items-center gap-1">
+                                        <Mail className="w-3 h-3 text-slate-400" /> {item.emailId}
+                                      </span>
+                                    </>
+                                  )}
                                 </div>
                               </div>
                             </div>
-                          );
-                        })}
-                      </div>
+
+                            <div className="flex items-center gap-4 sm:text-right shrink-0">
+                              <div>
+                                <div className="font-extrabold text-slate-900 text-base">
+                                  ₹{item.totalDue.toLocaleString('en-IN')}
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                  {item.invoicesCount} open bill(s)
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setInspectMessage(item);
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-2xs transition"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>Preview</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
                     )}
                   </div>
 
@@ -1610,12 +1978,7 @@ export default function DashboardPage() {
                       </button>
                       {selectedQueueIds.size > 0 && (
                         <span className="text-xs text-slate-600">
-                          <strong className="text-purple-700">{selectedQueueIds.size}</strong> account(s) approved.
-                          {selectedMissingCount > 0 && (
-                            <span className="text-amber-700 font-semibold ml-1">
-                              ({selectedMissingCount} with missing contacts will be skipped)
-                            </span>
-                          )}
+                          <strong className="text-purple-700">{selectedQueueIds.size}</strong> account(s) selected for dispatch.
                         </span>
                       )}
                     </div>
@@ -1624,7 +1987,7 @@ export default function DashboardPage() {
                       type="button"
                       onClick={handleDispatchApprovedQueue}
                       disabled={dispatchingQueue || selectedQueueIds.size === 0}
-                      className="px-6 py-2.5 rounded-xl text-xs font-extrabold bg-purple-600 hover:bg-purple-700 text-white shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
+                      className="px-6 py-2.5 rounded-xl text-xs font-extrabold bg-purple-600 hover:bg-purple-700 text-white shadow-2xs transition disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                       {dispatchingQueue ? (
                         <>
@@ -1648,7 +2011,7 @@ export default function DashboardPage() {
 
       {/* Inspect Message Modal */}
       {inspectMessage && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-y-auto max-h-[calc(100vh-2rem)] animate-in fade-in zoom-in-95 duration-150">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
               <div>

@@ -195,7 +195,14 @@ export async function executeTenantDigestRun(
       if (!isDueToday) continue; // Cadence hold: customer is not due for reminder today
 
       const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
-      const contactPerson = primaryContact?.personName || 'Sir / Madam';
+      // STRICT REQUIREMENT: Under no circumstances should reminders be sent without a registered contact!
+      if (!primaryContact) continue;
+
+      const hasPhone = Boolean(primaryContact.mobileNumber || primaryContact.whatsappNumber);
+      const hasEmail = Boolean(primaryContact.emailId);
+      if (!hasPhone && !hasEmail) continue;
+
+      const contactPerson = primaryContact.personName || 'Sir / Madam';
       const customerName = customer.partyName || customer.rawLedgerName;
       const language = customer.preferredLanguage || 'English';
 
@@ -210,24 +217,29 @@ export async function executeTenantDigestRun(
 
       const totalDue = Math.round(digestItems.reduce((sum, i) => sum + i.outstandingAmount, 0) * 100) / 100;
 
-      // Determine active channels
-      // Customers with a registered contact use every channel that contact allows; customers with no
-      // contact on file fall back to WhatsApp (the dispatcher routes it to the safe test number).
-      const channelsToTry: ('WHATSAPP' | 'SMS' | 'EMAIL')[] = primaryContact
-        ? ['WHATSAPP', 'SMS', 'EMAIL']
-        : ['WHATSAPP'];
+      // Determine active channels strictly based on available contact details
+      const channelsToTry: ('WHATSAPP' | 'SMS' | 'EMAIL')[] = [];
+      if (hasPhone) {
+        channelsToTry.push('WHATSAPP', 'SMS');
+      }
+      if (hasEmail) {
+        channelsToTry.push('EMAIL');
+      }
+      if (channelsToTry.length === 0) continue;
 
       for (const channel of channelsToTry) {
         // Opt-out check
-        if (channel === 'SMS' && primaryContact?.optOutSms) continue;
-        if (channel === 'WHATSAPP' && primaryContact?.optOutWhatsapp) continue;
-        if (channel === 'EMAIL' && primaryContact?.emailInvalid) continue;
+        if (channel === 'SMS' && primaryContact.optOutSms) continue;
+        if (channel === 'WHATSAPP' && primaryContact.optOutWhatsapp) continue;
+        if (channel === 'EMAIL' && primaryContact.emailInvalid) continue;
 
         const recipient =
-          (channel === 'EMAIL' ? primaryContact?.emailId : primaryContact?.mobileNumber) || undefined;
-        // A contact that exists but has no number/email for this channel is skipped; a customer with no
-        // contact at all still sends (recipient undefined -> safe test routing), same as the manual Remind button.
-        if (primaryContact && !recipient) continue;
+          channel === 'EMAIL'
+            ? primaryContact.emailId
+            : (primaryContact.mobileNumber || primaryContact.whatsappNumber);
+
+        // Strict: Never dispatch if recipient is missing or empty
+        if (!recipient || !recipient.trim()) continue;
 
         // Idempotency check: Already sent this channel today?
         const alreadySent = await prisma.reminderLog.findUnique({
@@ -512,7 +524,7 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
       previewMessage: body,
       previewSubject: subject,
       alreadySentToday,
-      hasContacts: Boolean(primaryContact?.mobileNumber || primaryContact?.emailId),
+      hasContacts: Boolean(primaryContact && (primaryContact.mobileNumber || primaryContact.whatsappNumber || primaryContact.emailId)),
       reminderEnabled: customer.reminderEnabled,
       pauseNote: customer.pauseNote,
     });

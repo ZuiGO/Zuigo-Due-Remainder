@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Users,
   Search,
@@ -24,6 +24,9 @@ import {
   Sliders,
   Calendar,
   Check,
+  Upload,
+  FileSpreadsheet,
+  FileUp,
 } from 'lucide-react';
 
 function ManualFrequencyInput({
@@ -136,6 +139,51 @@ export default function CustomersPage() {
   // Reminder History Modal State
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyCustomer, setHistoryCustomer] = useState<any | null>(null);
+
+  // Contact Excel Upload Modal State
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedContactFile, setSelectedContactFile] = useState<File | null>(null);
+  const [uploadingContact, setUploadingContact] = useState(false);
+  const [contactUploadMsg, setContactUploadMsg] = useState<string | null>(null);
+  const contactFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUploadContactSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedContactFile) {
+      setContactUploadMsg('Please select a Customer Contacts Excel (.xlsx, .xls) or CSV file first.');
+      return;
+    }
+
+    try {
+      setUploadingContact(true);
+      setContactUploadMsg(null);
+      const formData = new FormData();
+      formData.append('file', selectedContactFile);
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setContactUploadMsg(data.message || 'Customer contacts imported successfully!');
+        fetchCustomers();
+        setTimeout(() => {
+          setShowUploadModal(false);
+          setSelectedContactFile(null);
+          setContactUploadMsg(null);
+          fetchCustomers();
+        }, 1800);
+      } else {
+        setContactUploadMsg(data.error || 'Failed to import contacts file.');
+      }
+    } catch (err: any) {
+      setContactUploadMsg('Upload error: ' + err?.message);
+    } finally {
+      setUploadingContact(false);
+    }
+  };
 
   const fetchCustomers = async () => {
     try {
@@ -393,6 +441,18 @@ export default function CustomersPage() {
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <button
+            onClick={() => {
+              setSelectedContactFile(null);
+              setContactUploadMsg(null);
+              setShowUploadModal(true);
+            }}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-50 shadow-sm transition whitespace-nowrap"
+            title="Import customer contact sheet (.xlsx, .xls, .csv)"
+          >
+            <Upload className="w-4 h-4 text-sky-600" /> Import Contacts Excel
+          </button>
+
           <button
             onClick={() => openAddContactModal(customers[0] || null)}
             className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 shadow-sm transition whitespace-nowrap"
@@ -1025,6 +1085,118 @@ export default function CustomersPage() {
                   className="px-5 py-2 rounded-xl text-xs font-bold bg-sky-600 text-white hover:bg-sky-700 transition disabled:opacity-50 shadow-sm"
                 >
                   {savingContact ? 'Saving...' : 'Save Contact Details'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Import Customer Contacts Excel Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-sky-50 flex items-center justify-center text-sky-600">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">Import Customer Contacts Excel</h3>
+                  <p className="text-[11px] text-slate-500">Upload Customer Contacts Master (.xlsx, .xls, .csv)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowUploadModal(false);
+                  setSelectedContactFile(null);
+                  setContactUploadMsg(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-50 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-sky-50/70 border border-sky-100 rounded-2xl p-3.5 text-xs text-sky-900 space-y-1.5">
+              <div className="font-bold flex items-center gap-1.5 text-sky-800">
+                <FileUp className="w-4 h-4 text-sky-600" /> Supported Columns:
+              </div>
+              <p className="text-[11px] leading-relaxed text-sky-700">
+                • <strong className="text-sky-900">Customer Name / Raw Ledger Name</strong> or <strong className="text-sky-900">Ledger Code</strong><br />
+                • <strong className="text-sky-900">Contact Person</strong> (e.g. Accounts Manager)<br />
+                • <strong className="text-sky-900">Mobile Number / WhatsApp</strong> (e.g. 9822011223)<br />
+                • <strong className="text-sky-900">Email ID</strong> (e.g. finance@customer.com)
+              </p>
+            </div>
+
+            <form onSubmit={handleUploadContactSubmit} className="space-y-4">
+              <div
+                onClick={() => contactFileInputRef.current?.click()}
+                className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-6 text-center cursor-pointer transition bg-slate-50/50 hover:bg-sky-50/30"
+              >
+                <input
+                  ref={contactFileInputRef}
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      setSelectedContactFile(e.target.files[0]);
+                      setContactUploadMsg(null);
+                    }
+                  }}
+                  className="hidden"
+                />
+                <Upload className="w-8 h-8 text-sky-600 mx-auto mb-2" />
+                <p className="text-xs font-bold text-slate-700">
+                  {selectedContactFile ? selectedContactFile.name : 'Click to select Customer Contacts file'}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">Accepts Excel (.xlsx, .xls) and CSV</p>
+                {selectedContactFile && (
+                  <span className="inline-block mt-2 px-2.5 py-1 bg-sky-100 text-sky-700 rounded-full text-[11px] font-semibold">
+                    {(selectedContactFile.size / 1024).toFixed(1)} KB ready
+                  </span>
+                )}
+              </div>
+
+              {contactUploadMsg && (
+                <div className={`p-3 rounded-xl text-xs font-semibold ${
+                  contactUploadMsg.includes('success') || contactUploadMsg.includes('Imported') || contactUploadMsg.includes('created')
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-rose-50 text-rose-800 border border-rose-200'
+                }`}>
+                  {contactUploadMsg}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUploadModal(false);
+                    setSelectedContactFile(null);
+                    setContactUploadMsg(null);
+                  }}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadingContact || !selectedContactFile}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-bold bg-sky-600 text-white hover:bg-sky-700 transition disabled:opacity-50 shadow-sm"
+                >
+                  {uploadingContact ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      Import Contacts
+                    </>
+                  )}
                 </button>
               </div>
             </form>

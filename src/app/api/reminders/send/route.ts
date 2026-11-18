@@ -75,13 +75,35 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
+      const primaryContact = customer.contacts?.find(c => c.isPrimary) || customer.contacts?.[0];
+
+      // Strict enforcement: Never send reminders if customer has no contact on file
+      if (!customer.contacts || customer.contacts.length === 0 || !primaryContact) {
+        return NextResponse.json(
+          { error: `Cannot send reminder: ${customer.partyName || customer.rawLedgerName} has no registered contact. Please add contact details in Customer Contacts first.` },
+          { status: 400 }
+        );
+      }
+
+      if (channel === 'EMAIL' && !primaryContact.emailId) {
+        return NextResponse.json(
+          { error: `Cannot send Email reminder: No email address found for ${primaryContact.personName || customer.partyName}. Please add an email address in Customer Contacts.` },
+          { status: 400 }
+        );
+      }
+
+      if ((channel === 'WHATSAPP' || channel === 'SMS') && !primaryContact.mobileNumber && !primaryContact.whatsappNumber) {
+        return NextResponse.json(
+          { error: `Cannot send ${channel} reminder: No mobile or WhatsApp number found for ${primaryContact.personName || customer.partyName}. Please add a phone number in Customer Contacts.` },
+          { status: 400 }
+        );
+      }
 
       // Recipient from registered customer contacts
       const effectiveRecipient =
-        channel === 'EMAIL'
-          ? (primaryContact?.emailId || undefined)
-          : (primaryContact?.mobileNumber || undefined);
+        (channel === 'EMAIL'
+          ? primaryContact.emailId
+          : (primaryContact.mobileNumber || primaryContact.whatsappNumber)) || undefined;
 
       const formattedDueDate = new Date(invoice.dueDate).toLocaleDateString('en-IN', {
         day: '2-digit',
