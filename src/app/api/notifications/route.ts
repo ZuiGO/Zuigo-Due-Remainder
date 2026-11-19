@@ -118,11 +118,10 @@ export async function GET(req: NextRequest) {
       };
     }
 
-    // 4. Calculate total unread/actionable alerts
-    const totalAlertsCount =
-      formattedMissingContacts.length +
-      (overdueCount > 0 ? 1 : 0) +
-      (latestDiff && (latestDiff.settledEntriesCount > 0 || latestDiff.newEntriesCount > 0) ? 1 : 0);
+    // 4. Badge count = actionable missing-contact customers only, so the bell badge
+    // always matches the "Missing Contact Details (N)" header in the panel.
+    // Overdue and diff summaries are shown inside the panel as context, not counted.
+    const totalAlertsCount = formattedMissingContacts.length;
 
     return NextResponse.json({
       success: true,

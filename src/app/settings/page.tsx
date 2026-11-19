@@ -16,6 +16,7 @@ import {
   Zap,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Trash2,
 } from 'lucide-react';
 
@@ -316,7 +317,7 @@ export default function SettingsPage() {
         <div>
           <h2 className="font-display text-[23px] font-semibold text-[#3A3A3A] tracking-[-0.03em] flex items-center gap-2">
             <Settings className="w-6 h-6 text-slate-700" />
-            Platform, Gateway & Autonomous Agent Settings
+            Settings
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             Configure company bank details, autonomous reminder agent, and multi-channel gateways.
@@ -395,7 +396,8 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* SECTION 2: COMPANY BANK & PAYMENT DETAILS */}
+        {/* SECTION 2: COMPANY BANK & PAYMENT DETAILS (administrators only) */}
+        {isAdmin && (
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <CreditCard className="w-5 h-5 text-emerald-600" />
@@ -406,6 +408,16 @@ export default function SettingsPage() {
               </p>
             </div>
           </div>
+
+          {(!tenant.bankAccountNo || tenant.bankAccountNo === '50200012345678') && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <strong>These are demo placeholder values.</strong> Until you save your real bank details here,
+                reminder messages are sent <strong>without</strong> any payment details to protect your customers.
+              </span>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
             <div>
@@ -453,6 +465,7 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* SECTION 3: AUTOMATED REMINDER CADENCE & DEFAULTER RULES */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
@@ -540,7 +553,8 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* SECTION 4: GATEWAY INTEGRATIONS & PROVIDERS */}
+        {/* SECTION 4: GATEWAY INTEGRATIONS & PROVIDERS (administrators only) */}
+        {isAdmin && (
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
@@ -856,7 +870,10 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* DATA MANAGEMENT & RESET */}
+        )}
+
+        {/* DATA MANAGEMENT & RESET (administrators only) */}
+        {isAdmin && (
         <div className="bg-white rounded-2xl border border-rose-200 shadow-sm overflow-hidden p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -885,6 +902,7 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+        )}
       </form>
 
       {/* Confirmation Modal for Clearing Data */}

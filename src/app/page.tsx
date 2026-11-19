@@ -40,8 +40,11 @@ import {
   Filter
 } from 'lucide-react';
 import { selectBestTemplate, populateInvoiceTemplate } from '@/lib/template-renderer';
+import { resolveTenantBankDetails } from '@/lib/bank-details';
+import { useUiLang } from '@/lib/ui-language';
 
 export default function DashboardPage() {
+  const { t } = useUiLang();
   const [tenant, setTenant] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
   const [latestBatch, setLatestBatch] = useState<any>(null);
@@ -64,6 +67,7 @@ export default function DashboardPage() {
   // Approval Queue State (Semi-Automated Dispatch Mode)
   const [showApprovalQueue, setShowApprovalQueue] = useState(false);
   const [queuedItems, setQueuedItems] = useState<any[]>([]);
+  const [queueBankConfigured, setQueueBankConfigured] = useState<boolean>(true);
   const [selectedQueueIds, setSelectedQueueIds] = useState<Set<string>>(new Set());
   const [loadingQueue, setLoadingQueue] = useState(false);
   const [dispatchingQueue, setDispatchingQueue] = useState(false);
@@ -288,7 +292,12 @@ export default function DashboardPage() {
 
   // Approval Queue logic
   const isItemEligible = (item: any) => {
-    const allSent = item.alreadySentToday?.whatsapp && item.alreadySentToday?.sms && item.alreadySentToday?.email;
+    // A customer is "done for today" when every channel they can actually receive has been sent
+    const hasPhone = Boolean(item.mobileNumber);
+    const hasEmail = Boolean(item.emailId);
+    const phoneDone = !hasPhone || (item.alreadySentToday?.whatsapp && item.alreadySentToday?.sms);
+    const emailDone = !hasEmail || item.alreadySentToday?.email;
+    const allSent = (hasPhone || hasEmail) && phoneDone && emailDone;
     return Boolean(item.hasContacts && item.reminderEnabled && !allSent);
   };
 
@@ -301,6 +310,7 @@ export default function DashboardPage() {
       if (data.success) {
         setQueuedItems(data.queue || []);
         setQueuedCount(data.totalQueuedCount || 0);
+        setQueueBankConfigured(data.bankDetailsConfigured !== false);
         // Pre-select only customers who have registered contacts and unsent channels
         const autoSelected = new Set<string>();
         (data.queue || []).forEach((item: any) => {
@@ -387,6 +397,7 @@ export default function DashboardPage() {
         setQueueActionMsg(data.message);
         fetchDashboardData();
         fetchApprovalQueue();
+        window.dispatchEvent(new CustomEvent('notifications-updated'));
       } else {
         setQueueActionMsg('Error: ' + data.error);
       }
@@ -457,6 +468,10 @@ export default function DashboardPage() {
       if (data.success) {
         setUploadMsg(data.message || 'Import successful!');
         fetchDashboardData();
+        window.dispatchEvent(new CustomEvent('notifications-updated'));
+        // Persist the import summary as a global toast so it remains visible after the modal closes
+        setActionMessage(data.message || 'Import successful!');
+        setTimeout(() => setActionMessage(null), 8000);
         setTimeout(() => {
           setShowUploadModal(false);
           setSelectedFiles([]);
@@ -493,11 +508,12 @@ export default function DashboardPage() {
 
     if (match) {
       setSelectedTemplateId(match.id);
+      const resolvedBank = resolveTenantBankDetails(tenant);
       const populated = populateInvoiceTemplate(
         match,
         inv,
         tenant?.companyName || 'Abhiyadna Machine Tools',
-        tenant?.bankDetails || 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234'
+        resolvedBank.configured ? resolvedBank.text : 'Please contact our accounts office for payment details.'
       );
       setCustomRemindMessage(populated.body);
       setRemindSubject(populated.subject);
@@ -648,22 +664,31 @@ export default function DashboardPage() {
     }
   };
 
-  const handleQuickMarkPaid = async (invoiceId: string) => {
+  const handleQuickMarkPaid = async (inv: any) => {
+    const partyName = inv?.customer?.partyName || inv?.customer?.rawLedgerName || 'this customer';
+    const confirmed = confirm(
+      `Mark bill ${inv?.billNo} (${partyName}) as fully paid?\n\nOutstanding ₹${(inv?.outstandingAmount || 0).toLocaleString('en-IN')} will be recorded as received. If the next SAP imports still show this bill open, it enters a 7-day "Pending SAP Confirmation" grace period and is flagged as Disputed if SAP never confirms it.`
+    );
+    if (!confirmed) return;
+
     try {
       const res = await fetch('/api/invoices/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          invoiceId,
+          invoiceId: inv.id,
           status: 'Payment Received',
           notes: 'Marked as Payment Received via Quick Action',
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setActionMessage('Marked invoice as Payment Received.');
+        setActionMessage(`Marked bill ${inv?.billNo} as Payment Received.`);
         fetchDashboardData();
+        window.dispatchEvent(new CustomEvent('notifications-updated'));
         setTimeout(() => setActionMessage(null), 3000);
+      } else {
+        alert(data.error || 'Failed to update invoice');
       }
     } catch (e: any) {
       alert('Error updating invoice: ' + e?.message);
@@ -837,19 +862,15 @@ export default function DashboardPage() {
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#e8f9fa] text-[#078d96]">
-              Multi-Tenant Active
-            </span>
-            <span className="text-xs text-[#9aa3aa]">•</span>
             <span className="text-xs font-semibold text-[#68737c]">
               {tenant?.companyName || 'Abhiyadna Machine Tools'}
             </span>
           </div>
           <h2 className="font-display text-[23px] font-semibold tracking-[-0.03em] text-[#3A3A3A] mb-1.5">
-            Dashboard & Receivables Overview
+            {t('title.dashboard')}
           </h2>
           <p className="text-xs text-[#7a858d] max-w-xl">
-            Real-time aging analysis, daily SAP diff reconciliation, multi-customer batch reminders, and Groq AI messaging.
+            Upload today's SAP file, see what changed, and send payment reminders — all in one place.
           </p>
         </div>
 
@@ -861,7 +882,7 @@ export default function DashboardPage() {
             title="Refresh and sync latest receivables & metrics"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Sync Metrics
+            {t('action.refresh')}
           </button>
 
           <button
@@ -871,33 +892,25 @@ export default function DashboardPage() {
               setShowUploadModal(true);
             }}
             className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-white border border-[#dfe6e9] text-[#59646c] text-[11px] font-semibold hover:bg-[#f7fcfc] hover:-translate-y-px transition shadow-2xs"
-            title="Import daily SAP dues or customer contact sheets"
+            title="Upload the daily SAP dues export or customer contact sheets"
           >
             <Upload className="w-3.5 h-3.5 text-[#09AEB8]" />
-            Import SAP Dues / Contacts
+            {t('action.uploadExcel')}
           </button>
 
+          {/* Single, unambiguous send entry point */}
           <button
             onClick={handleOpenApprovalQueue}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-[#fff7dc] border border-[#ffe9a6] text-[#7a5d0c] text-[11px] font-semibold hover:brightness-95 hover:-translate-y-px transition shadow-2xs"
-            title="Review and dispatch consolidated payment reminder digests"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#09AEB8] text-white text-[12px] font-bold shadow-[0_4px_10px_#09aeb82e] hover:brightness-95 hover:-translate-y-px transition"
+            title="Review today's reminders and approve sending"
           >
-            <ListChecks className="w-3.5 h-3.5" />
-            <span>Review Approval Queue</span>
+            <Send className="w-3.5 h-3.5" />
+            <span>{t('action.sendReminders')}</span>
             {queuedCount > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-[#FFD763] text-[#4e452a] font-bold">
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/25 text-white font-bold">
                 {queuedCount}
               </span>
             )}
-          </button>
-
-          <button
-            onClick={handleRunAutoCheck}
-            disabled={runningAutoCheck}
-            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-[#09AEB8] text-white text-[11px] font-semibold shadow-[0_4px_10px_#09aeb82e] hover:brightness-95 hover:-translate-y-px transition disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${runningAutoCheck ? 'animate-spin' : ''}`} />
-            {runningAutoCheck ? 'Dispatching...' : 'Quick Auto-Dispatch'}
           </button>
         </div>
       </div>
@@ -911,7 +924,7 @@ export default function DashboardPage() {
           <span>
             {autoSchedule.enabled
               ? `Runs automatically every day at ${autoSchedule.time} (${autoSchedule.timeZone}).`
-              : 'Turn on "Automated reminders" in Settings & Gateways to send daily without clicking.'}
+              : 'Turn on "Automated reminders" in Settings to send daily without clicking.'}
           </span>
           {autoSchedule.lastRun && (
             <span className="text-[#9aa3aa]">
@@ -947,12 +960,40 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* First-run: 3-step getting started checklist */}
+      {!loading && (stats?.totalCount || 0) === 0 && (
+        <div className="bg-white rounded-2xl border-2 border-dashed border-[#b8ecef] p-6 sm:p-8 text-center shadow-2xs">
+          <h3 className="font-display text-lg font-bold text-[#3A3A3A] mb-4">{t('start.title')}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl mx-auto mb-5 text-left">
+            {[t('start.step1'), t('start.step2'), t('start.step3')].map((step, i) => (
+              <div key={i} className="flex items-start gap-3 p-3.5 rounded-xl bg-[#f7fcfc] border border-[#e0f4f5]">
+                <span className="w-7 h-7 rounded-full bg-[#09AEB8] text-white font-extrabold text-sm flex items-center justify-center shrink-0">
+                  {i + 1}
+                </span>
+                <span className="text-xs font-semibold text-[#3A3A3A] leading-snug pt-1">{step}</span>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => {
+              setSelectedFiles([]);
+              setUploadMsg(null);
+              setShowUploadModal(true);
+            }}
+            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-[#09AEB8] text-white text-sm font-bold shadow-[0_4px_10px_#09aeb82e] hover:brightness-95 transition"
+          >
+            <Upload className="w-4 h-4" />
+            {t('start.cta')}
+          </button>
+        </div>
+      )}
+
       {/* KPI Financial Overview Cards */}
       {(() => {
         const pct = (n: number, d: number) => (d > 0 ? Math.min(100, Math.round((n / d) * 100)) : 0);
         const cards = [
           {
-            label: 'Total Bill Amount',
+            label: t('kpi.totalBill'),
             value: `₹${stats ? stats.totalReceivables.toLocaleString('en-IN') : '0'}`,
             note: `Matches Excel Ledger 1:1 (${stats?.totalCount || 0} bills in SAP export)`,
             foot: `${stats?.tradeInvoiceCount || 0} customer bills`,
@@ -961,7 +1002,7 @@ export default function DashboardPage() {
             chip: 'kpi-chip-teal',
           },
           {
-            label: 'Total Outstanding',
+            label: t('kpi.totalOutstanding'),
             value: `₹${stats ? stats.totalOutstandingAmount.toLocaleString('en-IN') : '0'}`,
             note: `Matches Excel Ledger 1:1 (Customer Trade Dues: ₹${stats ? stats.tradeOutstanding.toLocaleString('en-IN') : '0'})`,
             foot: 'of total billed',
@@ -970,7 +1011,7 @@ export default function DashboardPage() {
             chip: 'kpi-chip-blue',
           },
           {
-            label: 'Paid / Adjusted',
+            label: t('kpi.paidAdjusted'),
             value: `₹${stats ? stats.totalPaidAmount.toLocaleString('en-IN') : '0'}`,
             note: 'Matches Excel Ledger 1:1 (Total collected / adjusted)',
             foot: 'collected / adjusted',
@@ -979,7 +1020,7 @@ export default function DashboardPage() {
             chip: 'kpi-chip-teal',
           },
           {
-            label: 'Actionable Overdue',
+            label: t('kpi.actionableOverdue'),
             value: `₹${stats ? stats.totalOverdueAmount.toLocaleString('en-IN') : '0'}`,
             note: `${stats ? stats.overdueCount : 0} customer bills past due date (Eligible for reminders)`,
             foot: 'of total outstanding overdue',
@@ -1049,7 +1090,7 @@ export default function DashboardPage() {
             <div>
               <div className="flex items-center gap-2 flex-wrap mb-1">
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-[#e8f9fa] text-[#078d96] border border-[#b8ecef]">
-                  <Sparkles className="w-3 h-3 text-[#09AEB8]" /> Daily SAP Diff Reconciliation
+                  <Sparkles className="w-3 h-3 text-[#09AEB8]" /> {t('diff.badge')}
                 </span>
                 {latestBatch.newEntriesCount > 0 && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
@@ -1058,12 +1099,12 @@ export default function DashboardPage() {
                 )}
                 {(latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount) > 0 && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
-                    <AlertTriangle className="w-3 h-3 text-rose-600" /> {latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount} Missing Contact Details
+                    <AlertTriangle className="w-3 h-3 text-rose-600" /> {latestBatch.missingContactAlertsCount || latestBatch.newEntriesMissingContactCount} Bills Missing Contact Details
                   </span>
                 )}
               </div>
               <h3 className="font-display font-semibold text-base text-[#3A3A3A] flex items-center gap-2">
-                <span>Yesterday vs Today SAP Ledger Changes</span>
+                <span>{t('diff.title')}</span>
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
                 Comparing current export <strong className="text-slate-800 font-mono">{latestBatch.fileName}</strong>{' '}
@@ -1436,7 +1477,7 @@ export default function DashboardPage() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition"
             >
               <ListChecks className="w-3.5 h-3.5" />
-              Batch Dispatch Queue ({queuedCount})
+              {t('action.sendReminders')} ({queuedCount})
             </button>
           </div>
         </div>
@@ -1445,7 +1486,7 @@ export default function DashboardPage() {
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex items-center gap-1.5 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold overflow-x-auto shadow-2xs">
             {[
-              { id: 'CUSTOMER_DUES', label: 'Customer Dues', count: stats?.tradeInvoiceCount },
+              { id: 'CUSTOMER_DUES', label: 'Customer Dues', count: stats?.openTradeInvoiceCount ?? stats?.tradeInvoiceCount },
               ...(stats?.newTodayCount && stats.newTodayCount > 0
                 ? [{ id: 'NEW_TODAY', label: '✨ New Rows Added Today', count: stats.newTodayCount }]
                 : []),
@@ -1769,12 +1810,17 @@ export default function DashboardPage() {
                         <div className="text-[11px] text-slate-400">
                           {new Date(inv.billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                         </div>
-                        {inv.isSettled && inv.settledInFileName && (
+                        {inv.isSettled && inv.manualOverride ? (
+                          <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold bg-sky-50 text-sky-800 border border-sky-200">
+                            <CheckCircle2 className="w-3 h-3 text-sky-600 shrink-0" />
+                            <span>Manually marked paid (pending SAP confirmation)</span>
+                          </div>
+                        ) : inv.isSettled && inv.settledInFileName ? (
                           <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
                             <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
                             <span>Settled in: {inv.settledInFileName}</span>
                           </div>
-                        )}
+                        ) : null}
                       </td>
 
                       {/* Bill Amount */}
@@ -1933,12 +1979,18 @@ export default function DashboardPage() {
                       <td className="py-3.5 pr-6 pl-4 text-right">
                         {inv.isSettled ? (
                           <div className="flex flex-col items-end gap-1">
-                            <span className="text-[11px] font-bold text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200 inline-flex items-center gap-1 shadow-2xs">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" /> Settled in {inv.settledInFileName || 'SAP Excel'}
-                            </span>
+                            {inv.manualOverride ? (
+                              <span className="text-[11px] font-bold text-sky-800 bg-sky-50 px-2.5 py-1 rounded-lg border border-sky-200 inline-flex items-center gap-1 shadow-2xs">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-sky-600" /> Manually marked paid
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-bold text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200 inline-flex items-center gap-1 shadow-2xs">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" /> Settled in {inv.settledInFileName || 'SAP Excel'}
+                              </span>
+                            )}
                             {inv.settledAt && (
                               <span className="text-[10px] text-slate-400">
-                                Reconciled on {new Date(inv.settledAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                {inv.manualOverride ? 'Marked on' : 'Reconciled on'} {new Date(inv.settledAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                               </span>
                             )}
                           </div>
@@ -1957,7 +2009,7 @@ export default function DashboardPage() {
                         ) : (
                           <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => handleQuickMarkPaid(inv.id)}
+                              onClick={() => handleQuickMarkPaid(inv)}
                               title="Mark Payment Received"
                               className="px-2 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-[11px] font-bold hover:bg-emerald-100 transition"
                             >
@@ -2488,13 +2540,13 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <h3 className="font-extrabold text-slate-900 text-lg flex items-center gap-2">
-                    Daily Digest Approval Queue
+                    {t('queue.title')}
                     <span className="px-2 py-0.5 rounded-full text-xs font-black bg-purple-100 text-purple-800">
-                      Semi-Automated Review
+                      {t('queue.subtitle')}
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Review consolidated digests before dispatching. Accounts with no contacts are strictly blocked from messaging.
+                    {t('queue.help')}
                   </p>
                 </div>
               </div>
@@ -2581,6 +2633,18 @@ export default function DashboardPage() {
                       )}
                     </div>
                   </div>
+
+                  {/* Bank details not configured warning */}
+                  {!queueBankConfigured && (
+                    <div className="px-6 py-2.5 border-b border-amber-200 bg-amber-50 flex items-center gap-2 shrink-0 text-xs text-amber-900">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        <strong>Company bank details are not configured</strong> — reminder messages will be sent{' '}
+                        <strong>without payment details</strong>. Update them in{' '}
+                        <Link href="/settings" className="underline font-bold">Settings &amp; Gateways</Link> before going live.
+                      </span>
+                    </div>
+                  )}
 
                   {/* Filter Subtabs */}
                   <div className="px-6 py-2 border-b border-slate-100 bg-white flex items-center gap-2 shrink-0 text-xs">

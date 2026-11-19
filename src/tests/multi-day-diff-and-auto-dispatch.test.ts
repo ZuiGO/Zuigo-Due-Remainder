@@ -99,10 +99,11 @@ describe('Multi-Day SAP Export Diff & Autonomous Agent Integration Tests', () =>
     assert.ok(runResult.messagesSent > 0, 'Agent must automatically dispatch digest reminders');
     assert.strictEqual(runResult.customersProcessed, 3, 'All 3 customers should receive reminders');
 
-    // Verify ReminderLogs
+    // Verify ReminderLogs: with no live gateway configured, sandbox dispatches are
+    // transparently recorded as SIMULATED (live gateways record SENT/DELIVERED).
     const logs = await prisma.reminderLog.findMany({ where: { tenantId } });
     assert.ok(logs.length >= 3, 'Should log reminder digests in database');
-    assert.strictEqual(logs[0].status, 'SENT');
+    assert.ok(['SENT', 'SIMULATED'].includes(logs[0].status), 'Dispatch must be logged as SENT (live) or SIMULATED (sandbox)');
   });
 
   it('Step 3: Ingest Day 2 (Today Export) & accurately detect NEW, SAME, PARTIAL PAYMENT, and SETTLED', async () => {

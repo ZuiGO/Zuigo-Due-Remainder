@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { getPendingApprovalQueue, executeTenantDigestRun } from '@/lib/digest-engine';
+import { resolveTenantBankDetails } from '@/lib/bank-details';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,12 +17,14 @@ export async function GET(req: NextRequest) {
 
     const queue = await getPendingApprovalQueue(tenant.id);
     const totalQueuedDue = queue.reduce((sum, item) => sum + item.totalDue, 0);
+    const { configured: bankDetailsConfigured } = resolveTenantBankDetails(tenant);
 
     return NextResponse.json({
       success: true,
       queue,
       totalQueuedCount: queue.length,
       totalQueuedDue,
+      bankDetailsConfigured,
     });
   } catch (error: any) {
     console.error('Fetch Approval Queue error:', error);
@@ -47,8 +50,9 @@ export async function POST(req: NextRequest) {
       ? body.specificInvoiceIds
       : undefined;
 
+    // No force here: an approved run must dispatch exactly the cadence-due bills
+    // shown in the preview, and respect same-day idempotency.
     const summary = await executeTenantDigestRun(tenant.id, approvedCustomerIds, {
-      force: true,
       specificInvoiceIds,
     });
 

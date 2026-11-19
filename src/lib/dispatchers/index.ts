@@ -4,15 +4,20 @@ import { convertTextToEmailHtml } from '../template-renderer';
 
 /**
  * Multi-Channel Dispatcher Engine
- * SAFETY & TEST ENVIRONMENT:
- * All messages are guaranteed to land ONLY to:
- * - Email -> jayesh@zuigo.ai
- * - SMS & WhatsApp -> +918530383141
- * Real customer contact phone numbers and emails are never messaged.
+ *
+ * SAFE MODE (default ON):
+ * While DISPATCH_SAFE_MODE is not set to "false", all messages are redirected to
+ * the override targets below — real customer contacts are never messaged.
+ * Set DISPATCH_SAFE_MODE=false in the environment to deliver to real recipients.
+ *
+ * Deployment onboarding: override targets and per-channel provider credentials
+ * can be configured entirely through environment variables (see .env.example),
+ * so a fresh deployment can go live without touching the Settings UI.
  */
 
-export const OVERRIDE_TARGET_PHONE = '+918530383141';
-export const OVERRIDE_TARGET_EMAIL = 'jayesh@zuigo.ai';
+export const DISPATCH_SAFE_MODE = process.env.DISPATCH_SAFE_MODE !== 'false';
+export const OVERRIDE_TARGET_PHONE = process.env.OVERRIDE_TARGET_PHONE || '+918530383141';
+export const OVERRIDE_TARGET_EMAIL = process.env.OVERRIDE_TARGET_EMAIL || 'jayesh@zuigo.ai';
 
 export interface DispatchRequest {
   tenantId?: string;
@@ -33,6 +38,8 @@ export interface DispatchResponse {
   timestamp: Date;
   actionUrl?: string;
   effectiveRecipient: string;
+  /** True when no live gateway handled the message (sandbox simulator fallback). */
+  simulated?: boolean;
 }
 
 /**
@@ -45,8 +52,8 @@ export function buildChannelActionUrl(
   subject: string = 'Payment Due Reminder',
   recipient?: string
 ): string {
-  const targetPhone = OVERRIDE_TARGET_PHONE;
-  const targetEmail = OVERRIDE_TARGET_EMAIL;
+  const targetPhone = !DISPATCH_SAFE_MODE && recipient ? recipient : OVERRIDE_TARGET_PHONE;
+  const targetEmail = !DISPATCH_SAFE_MODE && recipient ? recipient : OVERRIDE_TARGET_EMAIL;
 
   if (channel === 'WHATSAPP') {
     const cleanDigits = targetPhone.replace(/\D/g, '');
@@ -78,11 +85,16 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     isSandbox: forceSandbox,
   } = req;
 
-  // 1. Safe Routing: All messages are redirected to test accounts
+  // 1. Safe Routing: in safe mode (default), all messages are redirected to the
+  // override targets; with DISPATCH_SAFE_MODE=false, real recipients are used.
   const intendedCustomerRecipient =
     recipient || (channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE);
   const effectiveRecipient =
-    channel === 'EMAIL' ? OVERRIDE_TARGET_EMAIL : OVERRIDE_TARGET_PHONE;
+    !DISPATCH_SAFE_MODE && recipient
+      ? recipient
+      : channel === 'EMAIL'
+        ? OVERRIDE_TARGET_EMAIL
+        : OVERRIDE_TARGET_PHONE;
 
   const actionUrl = buildChannelActionUrl(
     channel,
@@ -121,7 +133,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     }
   }
 
-  const isSandbox =
+  let isSandbox =
     forceSandbox !== undefined ? forceSandbox : (integration?.isSandbox ?? true);
 
   // 3. Resolve configuration and active provider
@@ -157,11 +169,57 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     config = { ...config, ...req.customConfig };
   }
 
-  const provider = req.providerName || integration?.providerName || 'SIMULATOR';
+  let provider = req.providerName || integration?.providerName || 'SIMULATOR';
+
+  // ----------------------------------------------------
+  // Deployment-level environment onboarding fallback:
+  // when no credentials are configured in Settings, each
+  // channel can be enabled purely via environment variables.
+  // ----------------------------------------------------
+  if (channel === 'EMAIL' && (!config.user || !config.pass) && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    config.user = process.env.SMTP_USER;
+    config.pass = process.env.SMTP_PASS;
+    config.host = config.host || process.env.SMTP_HOST;
+    config.port = config.port || process.env.SMTP_PORT;
+    if (config.secure === undefined && process.env.SMTP_SECURE) {
+      config.secure = process.env.SMTP_SECURE === 'true';
+    }
+    config.fromEmail = config.fromEmail || process.env.SMTP_FROM_EMAIL;
+    config.fromName = config.fromName || process.env.SMTP_FROM_NAME;
+  }
+
+  if (channel === 'WHATSAPP' && !config.accessToken && !config.accountSid) {
+    if (process.env.WHATSAPP_META_ACCESS_TOKEN && process.env.WHATSAPP_META_PHONE_NUMBER_ID) {
+      provider = 'META_CLOUD_API';
+      isSandbox = forceSandbox ?? false;
+      config.accessToken = process.env.WHATSAPP_META_ACCESS_TOKEN;
+      config.phoneNumberId = process.env.WHATSAPP_META_PHONE_NUMBER_ID;
+    } else if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_FROM) {
+      provider = 'TWILIO';
+      isSandbox = forceSandbox ?? false;
+      config.accountSid = process.env.TWILIO_ACCOUNT_SID;
+      config.authToken = process.env.TWILIO_AUTH_TOKEN;
+      config.fromNumber = process.env.TWILIO_WHATSAPP_FROM;
+    }
+  }
+
+  if (channel === 'SMS' && !config.apiKey && !config.accountSid) {
+    if (process.env.FAST2SMS_API_KEY) {
+      provider = 'FAST2SMS';
+      isSandbox = forceSandbox ?? false;
+      config.apiKey = process.env.FAST2SMS_API_KEY;
+    } else if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_SMS_FROM) {
+      provider = 'TWILIO';
+      isSandbox = forceSandbox ?? false;
+      config.accountSid = process.env.TWILIO_ACCOUNT_SID;
+      config.authToken = process.env.TWILIO_AUTH_TOKEN;
+      config.fromNumber = process.env.TWILIO_SMS_FROM;
+    }
+  }
 
   try {
     // ----------------------------------------------------
-    // EMAIL DISPATCH -> ALWAYS TO jayesh@zuigo.ai
+    // EMAIL DISPATCH -> effectiveRecipient (override target in safe mode)
     // ----------------------------------------------------
     if (channel === 'EMAIL') {
       let smtpHost = config.host || '';
@@ -169,7 +227,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
         smtpHost = 'smtp.gmail.com';
       }
 
-      // If valid SMTP user/pass credentials are present, ALWAYS dispatch live email to jayesh@zuigo.ai
+      // If valid SMTP user/pass credentials are present, dispatch live email
       if (config.user && config.pass) {
         const portNum = Number(config.port) || 587;
         const isSecure = config.secure !== undefined ? Boolean(config.secure) : portNum === 465;
@@ -205,7 +263,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
 
         const info = await transporter.sendMail({
           from: fromAddress,
-          to: OVERRIDE_TARGET_EMAIL, // STRICTLY jayesh@zuigo.ai
+          to: effectiveRecipient,
           subject: emailSubject,
           html: emailHtml,
           text: emailText,
@@ -230,7 +288,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           },
           body: JSON.stringify({
             from: config.fromEmail || 'onboarding@resend.dev',
-            to: OVERRIDE_TARGET_EMAIL, // STRICTLY jayesh@zuigo.ai
+            to: effectiveRecipient,
             subject: subject,
             text: messageContent.replace(/<[^>]+>/g, ''),
           }),
@@ -249,10 +307,10 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     }
 
     // ----------------------------------------------------
-    // WHATSAPP DISPATCH -> ALWAYS TO +918530383141
+    // WHATSAPP DISPATCH -> effectiveRecipient (override target in safe mode)
     // ----------------------------------------------------
     if (channel === 'WHATSAPP') {
-      const cleanTo = OVERRIDE_TARGET_PHONE.replace(/\D/g, ''); // 918530383141
+      const cleanTo = effectiveRecipient.replace(/\D/g, '');
       const waContent = messageContent;
 
       if (!isSandbox && provider === 'META_CLOUD_API' && config.accessToken && config.phoneNumberId) {
@@ -291,7 +349,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
           'From',
           config.fromNumber?.startsWith('whatsapp:') ? config.fromNumber : `whatsapp:${config.fromNumber}`
         );
-        params.append('To', `whatsapp:${OVERRIDE_TARGET_PHONE}`);
+        params.append('To', `whatsapp:${effectiveRecipient}`);
         params.append('Body', waContent);
 
         const res = await fetch(
@@ -319,10 +377,10 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
     }
 
     // ----------------------------------------------------
-    // SMS DISPATCH -> ALWAYS TO +918530383141
+    // SMS DISPATCH -> effectiveRecipient (override target in safe mode)
     // ----------------------------------------------------
     if (channel === 'SMS') {
-      const cleanTo = OVERRIDE_TARGET_PHONE.replace(/\D/g, '').slice(-10); // 8530383141
+      const cleanTo = effectiveRecipient.replace(/\D/g, '').slice(-10);
       const smsContent = messageContent;
 
       if (!isSandbox && provider === 'FAST2SMS' && config.apiKey) {
@@ -355,7 +413,7 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
         const auth = Buffer.from(`${config.accountSid}:${config.authToken}`).toString('base64');
         const params = new URLSearchParams();
         params.append('From', config.fromNumber || '+1234567890');
-        params.append('To', OVERRIDE_TARGET_PHONE);
+        params.append('To', effectiveRecipient);
         params.append('Body', smsContent);
 
         const res = await fetch(
@@ -382,15 +440,16 @@ export async function dispatchMessage(req: DispatchRequest): Promise<DispatchRes
       }
     }
 
-    // Default Sandbox / Direct Link Fallback: Record as SENT and link to test target
+    // Default Sandbox / Direct Link Fallback: Record as simulated and link to test target
     const simulatedId = `${channel.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     return {
       success: true,
       providerResponseId: simulatedId,
       status: 'SENT',
+      simulated: true,
       timestamp: new Date(),
       actionUrl,
-      effectiveRecipient, // jayesh@zuigo.ai or +918530383141
+      effectiveRecipient,
     };
   } catch (err: any) {
     console.error(`Dispatch error on channel ${channel}:`, err);

@@ -1,6 +1,7 @@
 import prisma from './db';
 import { dispatchMessage } from './dispatchers';
 import { computeAging } from './parser';
+import { resolveTenantBankDetails } from './bank-details';
 
 export interface DigestItem {
   billNo: string;
@@ -63,31 +64,37 @@ export function compileDigestMessage(payload: DigestPayload): { subject: string;
     contactPerson,
     language = 'English',
     companyName = 'Abhiyadna Machine Tools',
-    bankDetails = 'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234',
+    bankDetails = '',
     totalOutstanding,
     bills,
   } = payload;
 
   const billsListText = formatBillsList(bills);
+  // Bank details are injected only when the tenant has configured real values;
+  // otherwise the block is omitted entirely rather than sending placeholders.
+  const hasBankDetails = Boolean(bankDetails && bankDetails.trim());
 
   if (language === 'Hindi') {
+    const bankBlock = hasBankDetails ? `\n\nबैंक विवरण:\n${bankDetails}` : '';
     return {
       subject: `${companyName} - बकाया बिलों का भुगतान अनुस्मारक`,
-      body: `नमस्ते ${contactPerson},\n\nयह *${companyName}* की ओर से *${customerName}* के ${bills.length} बकाया बिलों का भुगतान अनुस्मारक है:\n\n${billsListText}\n\n*कुल बकाया राशि:* ₹${totalOutstanding.toLocaleString('en-IN')}\n\nकृपया शीघ्र भुगतान की व्यवस्था करें।\n\nबैंक विवरण:\n${bankDetails}\n\nधन्यवाद,\n${companyName}`,
+      body: `नमस्ते ${contactPerson},\n\nयह *${companyName}* की ओर से *${customerName}* के ${bills.length} बकाया बिलों का भुगतान अनुस्मारक है:\n\n${billsListText}\n\n*कुल बकाया राशि:* ₹${totalOutstanding.toLocaleString('en-IN')}\n\nकृपया शीघ्र भुगतान की व्यवस्था करें।${bankBlock}\n\nधन्यवाद,\n${companyName}`,
     };
   }
 
   if (language === 'Marathi') {
+    const bankBlock = hasBankDetails ? `\n\nबँक तपशील:\n${bankDetails}` : '';
     return {
       subject: `${companyName} - थकीत बिलांचे स्मरणपत्र`,
-      body: `सस्नेह नमस्कार ${contactPerson},\n\n*${companyName}* कडून *${customerName}* च्या खालील ${bills.length} थकीत बिलांच्या संदर्भात हे स्मरणपत्र आहे:\n\n${billsListText}\n\n*एकूण थकीत रक्कम:* ₹${totalOutstanding.toLocaleString('en-IN')}\n\nकृपया लवकरात लवकर रक्कम जमा करावी.\n\nबँक तपशील:\n${bankDetails}\n\nआपले नम्र,\n${companyName}`,
+      body: `सस्नेह नमस्कार ${contactPerson},\n\n*${companyName}* कडून *${customerName}* च्या खालील ${bills.length} थकीत बिलांच्या संदर्भात हे स्मरणपत्र आहे:\n\n${billsListText}\n\n*एकूण थकीत रक्कम:* ₹${totalOutstanding.toLocaleString('en-IN')}\n\nकृपया लवकरात लवकर रक्कम जमा करावी.${bankBlock}\n\nआपले नम्र,\n${companyName}`,
     };
   }
 
   // Default: English
+  const bankBlock = hasBankDetails ? `\n\nBank Transfer Details:\n${bankDetails}` : '';
   return {
     subject: `Payment Reminder: ${bills.length} Pending Invoice(s) - ${companyName}`,
-    body: `Dear ${contactPerson},\n\nThis is a payment reminder from *${companyName}* regarding ${bills.length} open invoice(s) for *${customerName}*:\n\n${billsListText}\n\n💰 *Total Outstanding Due:* ₹${totalOutstanding.toLocaleString('en-IN')}\n\nBank Transfer Details:\n${bankDetails}\n\nKindly arrange payment at your earliest convenience. Thank you.\n*${companyName}*`,
+    body: `Dear ${contactPerson},\n\nThis is a payment reminder from *${companyName}* regarding ${bills.length} open invoice(s) for *${customerName}*:\n\n${billsListText}\n\n💰 *Total Outstanding Due:* ₹${totalOutstanding.toLocaleString('en-IN')}${bankBlock}\n\nKindly arrange payment at your earliest convenience. Thank you.\n*${companyName}*`,
   };
 }
 
@@ -147,7 +154,7 @@ export async function executeTenantDigestRun(
     });
 
     const companyName = tenant?.companyName || 'Abhiyadna Machine Tools';
-    const bankDetails = `${tenant?.bankName || 'HDFC Bank'}, A/C: ${tenant?.bankAccountNo || '50200012345678'}, IFSC: ${tenant?.bankIfscCode || 'HDFC0001234'}`;
+    const bankDetails = resolveTenantBankDetails(tenant).text;
 
     // 3. Fetch customers with active overdue/due bills where reminderEnabled is true
     const customerFilter: any = {
@@ -170,7 +177,7 @@ export async function executeTenantDigestRun(
           where: {
             actionType: 'Follow-up Required',
             outstandingAmount: { gt: 0 },
-            status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] },
+            status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Disputed / Grace Period Expired'] },
           },
           include: {
             commitments: {
@@ -195,10 +202,11 @@ export async function executeTenantDigestRun(
 
       if (eligibleBills.length === 0) continue;
 
-      // 2. Check if customer is due for reminder today:
-      // If approvedCustomerIds or force is true, proceed.
-      // Otherwise, at least ONE bill must have reached its configured follow-up date (nextFollowUpDate <= now).
-      let billsToInclude = (force || Boolean(approvedCustomerIds && approvedCustomerIds.length > 0))
+      // 2. Check if customer is due for reminder today.
+      // The cadence filter below MUST mirror getPendingApprovalQueue exactly, so that an
+      // approved digest dispatches precisely the bills that were previewed. Only an explicit
+      // force (demo) run bypasses cadence.
+      let billsToInclude = force
         ? eligibleBills
         : eligibleBills.filter(i => (i.nextFollowUpDate ? new Date(i.nextFollowUpDate) <= now : new Date(i.dueDate.getTime() - 3 * 86400000) <= now));
 
@@ -298,7 +306,7 @@ export async function executeTenantDigestRun(
           dispatchRunId: activeRun.id,
           recipient: dispatchResult.effectiveRecipient || recipient || 'N/A',
           triggerType: 'AUTOMATIC',
-          status: dispatchResult.status,
+          status: dispatchResult.simulated && dispatchResult.status === 'SENT' ? 'SIMULATED' : dispatchResult.status,
           billsIncludedCount: digestItems.length,
           messageContent: body,
           subject,
@@ -319,9 +327,10 @@ export async function executeTenantDigestRun(
           create: { tenantId, customerId: customer.id, channel, sentDate: todayDate, ...logData },
         });
 
-        // Junction records (replace any from an earlier run of the same day)
+        // Junction records (replace any from an earlier run of the same day).
+        // Only the bills actually included in the dispatched digest are linked.
         await prisma.reminderLogBills.deleteMany({ where: { reminderLogId: log.id } });
-        for (const inv of eligibleBills) {
+        for (const inv of billsToInclude) {
           await prisma.reminderLogBills.create({
             data: { reminderLogId: log.id, invoiceId: inv.id },
           });
@@ -425,6 +434,8 @@ export interface QueuedDigestCustomer {
   hasContacts: boolean;
   reminderEnabled: boolean;
   pauseNote?: string | null;
+  /** False while the tenant still has placeholder/missing bank details configured. */
+  bankDetailsConfigured: boolean;
 }
 
 /**
@@ -440,7 +451,8 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
   });
 
   const companyName = tenant?.companyName || 'Abhiyadna Machine Tools';
-  const bankDetails = `${tenant?.bankName || 'HDFC Bank'}, A/C: ${tenant?.bankAccountNo || '50200012345678'}, IFSC: ${tenant?.bankIfscCode || 'HDFC0001234'}`;
+  const resolvedBank = resolveTenantBankDetails(tenant);
+  const bankDetails = resolvedBank.text;
 
   const customers = await prisma.customer.findMany({
     where: {
@@ -455,7 +467,7 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
         where: {
           actionType: 'Follow-up Required',
           outstandingAmount: { gt: 0 },
-          status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation'] },
+          status: { notIn: ['Payment Received', 'Closed', 'Payment Received - Pending SAP Confirmation', 'Disputed / Grace Period Expired'] },
         },
         include: {
           commitments: {
@@ -486,14 +498,23 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
     const billsDueOnCadence = eligibleBills.filter(
       i => (i.nextFollowUpDate ? new Date(i.nextFollowUpDate) <= now : new Date(i.dueDate.getTime() - 3 * 86400000) <= now)
     );
-    if (billsDueOnCadence.length === 0) continue;
+
+    // A customer who already received today's digest has their follow-up pushed forward,
+    // so no bills remain due on cadence — still list them under "Already Sent Today".
+    const sentTodayChannels = customer.reminderLogs.length > 0;
+    const billsForDisplay = billsDueOnCadence.length > 0
+      ? billsDueOnCadence
+      : sentTodayChannels
+        ? eligibleBills
+        : [];
+    if (billsForDisplay.length === 0) continue;
 
     const primaryContact = customer.contacts.find(c => c.isPrimary) || customer.contacts[0];
     const contactPerson = primaryContact?.personName || 'Sir / Madam';
     const customerName = customer.partyName || customer.rawLedgerName;
     const language = customer.preferredLanguage || 'English';
 
-    const digestItems: DigestItem[] = billsDueOnCadence.map(i => ({
+    const digestItems: DigestItem[] = billsForDisplay.map(i => ({
       billNo: i.billNo,
       billAmount: i.billAmount,
       outstandingAmount: i.outstandingAmount,
@@ -543,6 +564,7 @@ export async function getPendingApprovalQueue(tenantId: string): Promise<QueuedD
       hasContacts: Boolean(primaryContact && (primaryContact.mobileNumber || primaryContact.whatsappNumber || primaryContact.emailId)),
       reminderEnabled: customer.reminderEnabled,
       pauseNote: customer.pauseNote,
+      bankDetailsConfigured: resolvedBank.configured,
     });
   }
 

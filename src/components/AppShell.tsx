@@ -3,27 +3,46 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  Receipt, 
-  Users, 
-  MessageSquare, 
-  Settings, 
-  History, 
+import {
+  LayoutDashboard,
+  Receipt,
+  Users,
+  MessageSquare,
+  Settings,
+  History,
   LogOut,
   ExternalLink,
+  Menu,
+  X,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
+import { LanguageProvider, useUiLang, type UiLang } from '@/lib/ui-language';
 
 const NAV_ITEMS = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard, title: 'Dashboard & Receivables Overview' },
-  { href: '/customers', label: 'Customer Contacts', icon: Users, title: 'Customer Contacts Directory' },
-  { href: '/templates', label: 'Message Templates', icon: MessageSquare, title: 'Message Templates' },
-  { href: '/logs', label: 'Reminder History', icon: History, title: 'Reminder History & Audit Logs' },
-  { href: '/settings', label: 'Settings & Gateways', icon: Settings, title: 'Settings & Integrations' },
+  { href: '/', labelKey: 'nav.dashboard', icon: LayoutDashboard, titleKey: 'title.dashboard' },
+  { href: '/customers', labelKey: 'nav.customers', icon: Users, titleKey: 'title.customers' },
+  { href: '/templates', labelKey: 'nav.templates', icon: MessageSquare, titleKey: 'title.templates' },
+  { href: '/logs', labelKey: 'nav.history', icon: History, titleKey: 'title.history' },
+  { href: '/settings', labelKey: 'nav.settings', icon: Settings, titleKey: 'title.settings' },
+];
+
+const LANG_OPTIONS: { code: UiLang; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'hi', label: 'हिंदी' },
+  { code: 'mr', label: 'मराठी' },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
+  return (
+    <LanguageProvider>
+      <AppShellInner>{children}</AppShellInner>
+    </LanguageProvider>
+  );
+}
+
+function AppShellInner({ children }: { children: React.ReactNode }) {
+  const { lang, setLang, t } = useUiLang();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -87,8 +106,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="bg-[#F5F8FA] text-[#3A3A3A] font-sans antialiased min-h-screen flex w-full">
-      {/* SIDEBAR (fixed, white, teal active state) */}
-      <aside className="w-[248px] bg-white flex flex-col justify-between shrink-0 border-r border-[#e5eaed] fixed left-0 top-0 bottom-0 h-screen z-40 overflow-y-auto">
+      {/* Mobile overlay behind the drawer */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* SIDEBAR: fixed on desktop, slide-in drawer on mobile */}
+      <aside
+        className={`w-[248px] bg-white flex flex-col justify-between shrink-0 border-r border-[#e5eaed] fixed left-0 top-0 bottom-0 h-screen z-50 overflow-y-auto transition-transform duration-200 ${
+          mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+        } lg:translate-x-0`}
+      >
         <div>
           {/* Brand: Abhiyadna Machine Tools logo */}
           <a
@@ -105,14 +137,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </a>
 
-          <div className="px-[22px] pt-6 pb-2 text-[10px] font-bold uppercase tracking-[1.1px] text-[#9aa3aa]">Workspace</div>
+          <div className="px-[22px] pt-6 pb-2 text-[10px] font-bold uppercase tracking-[1.1px] text-[#9aa3aa]">{t('nav.workspace')}</div>
           <nav className="px-3 grid gap-1 text-[13px] font-medium">
-            {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+            {NAV_ITEMS.map(({ href, labelKey, icon: Icon }) => {
               const active = pathname === href;
               return (
                 <Link
                   key={href}
                   href={href}
+                  onClick={() => setMobileNavOpen(false)}
                   className={`flex items-center gap-3 px-3 py-[11px] rounded-[9px] transition ${
                     active
                       ? 'bg-[#e8f9fa] text-[#078d96] font-bold'
@@ -120,11 +153,30 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   }`}
                 >
                   <Icon className="w-[17px] h-[17px]" />
-                  {label}
+                  {t(labelKey)}
                 </Link>
               );
             })}
           </nav>
+
+          {/* UI language switcher */}
+          <div className="px-[22px] pt-5 pb-1 text-[10px] font-bold uppercase tracking-[1.1px] text-[#9aa3aa]">Language / भाषा</div>
+          <div className="px-3 flex gap-1.5">
+            {LANG_OPTIONS.map((opt) => (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() => setLang(opt.code)}
+                className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-bold border transition ${
+                  lang === opt.code
+                    ? 'bg-[#e8f9fa] text-[#078d96] border-[#b8ecef]'
+                    : 'bg-white text-[#68737c] border-[#e5eaed] hover:bg-[#f7fcfc]'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* User card, Zuigo branding & logout */}
@@ -166,13 +218,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* MAIN AREA */}
-      <div className="flex-1 flex flex-col min-w-0 pl-[248px] min-h-screen">
-        <header className="sticky top-0 z-30 bg-white border-b border-[#e7ecef] px-[30px] pr-8 sm:pr-10 min-h-[78px] py-2.5 flex items-center justify-between gap-5 shadow-[0_3px_12px_rgba(25,45,55,.04)]">
-          <div>
-            <div className="text-[11px] text-[#9aa3aa] mb-1">
-              Payment Follow-up Automation <span className="mx-1">/</span> <span>{activeItem.label}</span>
+      <div className="flex-1 flex flex-col min-w-0 pl-0 lg:pl-[248px] min-h-screen">
+        <header className="sticky top-0 z-30 bg-white border-b border-[#e7ecef] px-4 sm:px-[30px] pr-4 sm:pr-10 min-h-[78px] py-2.5 flex items-center justify-between gap-3 sm:gap-5 shadow-[0_3px_12px_rgba(25,45,55,.04)]">
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Mobile hamburger */}
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(!mobileNavOpen)}
+              className="lg:hidden p-2 -ml-1 rounded-xl text-[#3A3A3A] hover:bg-slate-100 transition shrink-0"
+              aria-label="Open navigation menu"
+            >
+              {mobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+            <div className="min-w-0">
+              <div className="text-[11px] text-[#9aa3aa] mb-1 truncate hidden sm:block">
+                {t('breadcrumb.app')} <span className="mx-1">/</span> <span>{t(activeItem.labelKey)}</span>
+              </div>
+              <div className="font-display font-semibold text-[16px] sm:text-[18px] tracking-tight text-[#3A3A3A] truncate">{t(activeItem.titleKey)}</div>
             </div>
-            <div className="font-display font-semibold text-[18px] tracking-tight text-[#3A3A3A]">{activeItem.title}</div>
           </div>
 
           <div className="flex items-center gap-4">

@@ -158,9 +158,23 @@ export async function POST(req: NextRequest) {
       diffSummary = res; // Keeps latest diff summary
     }
 
-    // 5. Excel Upload is strictly for ingestion, diffing, and reconciliation.
-    // Automated or manual reminders are NEVER dispatched on upload to avoid accidental messaging.
-    // Users can review dues and dispatch reminders via the Dues/Customer controls or automated cron.
+    // 5. Autonomous Follow-up Agent: when the "Trigger Autonomous Reminders on Excel Upload"
+    // setting is enabled, run a cadence-respecting digest dispatch right after a dues import.
+    // The run honors contact requirements, opt-outs, cadence dates, and same-day idempotency —
+    // and with the toggle OFF, upload remains strictly ingestion-only.
+    if (duesFiles.length > 0) {
+      const globalSchedule = await prisma.reminderSchedule.findFirst({
+        where: { customerId: null },
+        select: { autoReminderEnabled: true },
+      });
+      if (globalSchedule?.autoReminderEnabled) {
+        try {
+          autoDispatchSummary = await executeTenantDigestRun(tenant.id);
+        } catch (autoErr) {
+          console.error('Autonomous dispatch after upload failed:', autoErr);
+        }
+      }
+    }
 
     // 6. Build unified confirmation message for single or simultaneous dual-file upload
     const msgParts: string[] = [];

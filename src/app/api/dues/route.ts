@@ -457,10 +457,13 @@ export async function GET(req: NextRequest) {
 
       const isNewToday = inv.billNo ? newBillNosSet.has(inv.billNo.trim().toUpperCase()) : false;
 
-      // Track which Excel import file settled this bill
+      // Track which Excel import file settled this bill.
+      // Manual overrides are never attributed to an import batch — the UI labels them separately.
       const settledInfo = settledBatchByBillNo.get(inv.billNo?.trim().toUpperCase());
-      const settledInFileName = inv.settledInFileName || settledInfo?.fileName || (isSettled ? (activeBatch?.fileName || 'SAP Reconciled') : null);
-      const settledAt = inv.settledAt || settledInfo?.settledAt || null;
+      const settledInFileName = inv.manualOverride
+        ? null
+        : (inv.settledInFileName || settledInfo?.fileName || (isSettled ? (activeBatch?.fileName || 'SAP Reconciled') : null));
+      const settledAt = inv.settledAt || settledInfo?.settledAt || (inv.manualOverride ? inv.manualMarkedDate : null) || null;
 
       // Contact Resolution: Invoice-specific contact has highest priority; falls back to company-level contact
       const hasInvoiceSpecificContact = Boolean(inv.contactPhone || inv.contactEmail || inv.contactPerson);
@@ -560,6 +563,7 @@ export async function GET(req: NextRequest) {
     let pendingCount = 0;
     let partiallySettledCount = 0;
     let tradeInvoiceCount = 0;
+    let openTradeInvoiceCount = 0;
     let internalCount = 0;
     let creditNotesCount = 0;
     const flaggedCustomerIds = new Set<string>();
@@ -610,6 +614,8 @@ export async function GET(req: NextRequest) {
         tradePaidAmount += (inv.billAmount > 0 ? inv.billAmount : 0);
         continue;
       }
+
+      openTradeInvoiceCount++;
 
       tradeReceivables += inv.billAmount;
       tradeOutstanding += inv.outstandingAmount;
@@ -706,6 +712,7 @@ export async function GET(req: NextRequest) {
         nonTradeAmount: Math.round((internalMutedAmount + creditNotesAmount) * 100) / 100,
         totalCount: allInvoices.length,
         tradeInvoiceCount,
+        openTradeInvoiceCount,
         newTodayCount: newBillNosSet.size,
         newEntriesWithContactCount,
         newEntriesMissingContactCount,

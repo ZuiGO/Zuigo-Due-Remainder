@@ -399,16 +399,25 @@ export default function CustomersPage() {
     }
   };
 
+  // Same semantics as the notification bell: actionable trade customers lacking any
+  // reachable contact (phone, WhatsApp, or email). Internal/excluded ledgers don't count.
+  const isInternalLedger = (c: any) =>
+    c.status === 'INTERNAL_MUTED' ||
+    c.status === 'EXCLUDED' ||
+    /electricity|tds|sales return|purchase return/i.test(c.partyName || c.rawLedgerName || '');
+
+  const hasReachableContact = (c: any) =>
+    c.contacts && c.contacts.some((ct: any) => ct.mobileNumber || ct.whatsappNumber || ct.emailId);
+
   const missingContactsList = customers.filter(
-    (c) => !c.contacts || c.contacts.length === 0 || !c.contacts.some((ct: any) => ct.mobileNumber || ct.emailId)
+    (c) => !isInternalLedger(c) && !hasReachableContact(c)
   );
 
   const flaggedList = customers.filter((c) => c.isFlagged);
 
   const filtered = customers.filter((c) => {
     if (tab === 'MISSING_CONTACTS') {
-      const hasValidContact = c.contacts && c.contacts.some((ct: any) => ct.mobileNumber || ct.emailId);
-      if (hasValidContact) return false;
+      if (hasReachableContact(c) || isInternalLedger(c)) return false;
     } else if (tab === 'FLAGGED') {
       if (!c.isFlagged) return false;
     }
@@ -602,6 +611,8 @@ export default function CustomersPage() {
                     /sales return/i.test(c.partyName || '') ||
                     /phonepe/i.test(c.rawLedgerName || '');
                   const isCreditBalanceOrZero = (c.totalOutstanding || 0) <= 0;
+                  // Badge only for a true credit (negative) balance — ₹0 before dues import is simply "no dues yet"
+                  const hasCreditBalance = (c.totalOutstanding || 0) < 0;
                   const isMuted = isInternal || isCreditBalanceOrZero;
 
                   return (
@@ -614,7 +625,7 @@ export default function CustomersPage() {
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                               Internal / TDS (Muted)
                             </span>
-                          ) : isCreditBalanceOrZero ? (
+                          ) : hasCreditBalance ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
                               Credit Balance (Cr)
                             </span>

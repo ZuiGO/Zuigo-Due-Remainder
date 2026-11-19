@@ -181,12 +181,20 @@ describe('Invoice-Level Contacts, Settled Tab & Authoritative Excel Override', (
     // Ingest Day 3
     await reconcileDailySapExport(tenantId, 'Day3_Outstanding_Receivable.xls', parsedDay3);
 
-    // Check the invoice again - it MUST revert to Excel authoritative balance and clear manualOverride
+    // Check the invoice again — the Excel balance is authoritative immediately, while the
+    // fresh manual mark enters the 7-day grace period awaiting SAP confirmation
+    // (see webhooks-and-grace-period tests for the full grace/dispute lifecycle).
     const reconciled = await prisma.invoice.findUnique({ where: { id: openInv.id } });
     assert.ok(reconciled);
     assert.equal(reconciled.outstandingAmount, 3006, 'Must revert to Excel authoritative balance (₹3,006.00)');
-    assert.equal(reconciled.manualOverride, false, 'manualOverride must be reset to false');
-    assert.equal(reconciled.manualMarkedDate, null, 'manualMarkedDate must be reset to null');
+    assert.equal(reconciled.manualOverride, true, 'manualOverride is preserved while the grace period runs');
+    assert.ok(reconciled.manualMarkedDate, 'manualMarkedDate is preserved while the grace period runs');
+    assert.ok(reconciled.gracePeriodExpiresOn, 'grace period expiry must be tracked');
+    assert.equal(
+      reconciled.status,
+      'Payment Received - Pending SAP Confirmation',
+      'fresh manual mark must enter the 7-day grace period instead of silently reverting'
+    );
     assert.notEqual(reconciled.status, 'Closed', 'status must no longer be Closed');
   });
 });

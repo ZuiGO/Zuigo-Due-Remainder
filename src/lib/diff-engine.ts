@@ -363,13 +363,25 @@ export async function reconcileDailySapExport(
 
         // Official SAP Excel export is the authoritative ledger of truth:
         // If a user marked an invoice settled or partially paid, but the incoming SAP Excel sheet
-        // still lists an open outstanding balance (newBal > 0), revert the manual mark and restore
-        // the active balance strictly according to the new Excel sheet.
+        // still lists an open outstanding balance (newBal > 0), the manual mark enters a 7-day
+        // grace period ("Payment Received - Pending SAP Confirmation") awaiting SAP clearance,
+        // and escalates to "Disputed / Grace Period Expired" if SAP never confirms it.
         const wasManuallyMarked =
           existing.manualOverride ||
           existing.status === 'Closed' ||
           existing.status === 'Payment Received' ||
-          existing.status === 'Payment Received - Pending SAP Confirmation';
+          existing.status === 'Payment Received - Pending SAP Confirmation' ||
+          existing.status === 'Disputed / Grace Period Expired';
+
+        // Grace period applies only to explicit human overrides (manualOverride=true);
+        // statuses previously set by SAP reconciliation itself revert immediately.
+        let graceExpiry: Date | null = null;
+        let graceState: 'NONE' | 'GRACE' | 'EXPIRED' = 'NONE';
+        if (existing.manualOverride) {
+          const markedAt = existing.manualMarkedDate ? new Date(existing.manualMarkedDate) : new Date();
+          graceExpiry = new Date(markedAt.getTime() + 7 * 86400000);
+          graceState = new Date() <= graceExpiry ? 'GRACE' : 'EXPIRED';
+        }
 
         let billStatus = existing.status;
         let diffNotes = '';
@@ -387,14 +399,32 @@ export async function reconcileDailySapExport(
           // newBal > 0: official SAP export is authoritative!
           billStatus = inv.adjustment > 0 ? 'Partially Paid' : 'Pending';
 
-          if (wasManuallyMarked) {
+          if (graceState === 'GRACE') {
+            billStatus = 'Payment Received - Pending SAP Confirmation';
+            diffNotes = `Marked paid manually — awaiting SAP confirmation (grace period until ${graceExpiry!.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}). Latest SAP export (${fileName}) still reports ₹${newBal.toLocaleString('en-IN')} open.`;
+          } else if (graceState === 'EXPIRED') {
+            billStatus = 'Disputed / Grace Period Expired';
+            diffNotes = `Manual payment mark was NOT confirmed by SAP within 7 days — flagged for accounts review. Latest SAP export (${fileName}) still reports ₹${newBal.toLocaleString('en-IN')} open.`;
+          } else if (wasManuallyMarked) {
             diffNotes = `Reverted manual mark: Latest SAP Excel (${fileName}) still reports open outstanding due of ₹${newBal.toLocaleString('en-IN')}. Restored to active ledger per official SAP export.`;
           } else if (newBal > oldBal) {
             diffNotes = `Balance increased from ₹${oldBal.toLocaleString('en-IN')} to ₹${newBal.toLocaleString('en-IN')} in SAP.`;
           } else {
-            diffNotes = `Unchanged bill still pending. Aging updated: ${inv.daysOverdue} days overdue.`;
+            const agingPhrase =
+              inv.daysOverdue > 0
+                ? `${inv.daysOverdue} day${inv.daysOverdue === 1 ? '' : 's'} overdue`
+                : inv.daysOverdue === 0
+                ? 'due today'
+                : `due in ${Math.abs(inv.daysOverdue)} day${Math.abs(inv.daysOverdue) === 1 ? '' : 's'}`;
+            diffNotes = `Unchanged bill still pending. Aging updated: ${agingPhrase}.`;
           }
         }
+
+        // While in grace/dispute flow, preserve the manual-override markers so the next
+        // import can keep tracking the grace window; otherwise clear them per SAP truth.
+        const inGraceFlow =
+          billStatus === 'Payment Received - Pending SAP Confirmation' ||
+          billStatus === 'Disputed / Grace Period Expired';
 
         await prisma.invoice.update({
           where: { id: existing.id },
@@ -409,10 +439,10 @@ export async function reconcileDailySapExport(
             status: billStatus,
             dueDate: inv.dueDate,
             billDate: inv.billDate,
-            manualOverride: false,
-            manualMarkedDate: null,
-            manualMarkedBy: null,
-            gracePeriodExpiresOn: null,
+            manualOverride: inGraceFlow,
+            manualMarkedDate: inGraceFlow ? existing.manualMarkedDate : null,
+            manualMarkedBy: inGraceFlow ? existing.manualMarkedBy : null,
+            gracePeriodExpiresOn: inGraceFlow ? graceExpiry : null,
             settledInFileName: newBal === 0 ? fileName : null,
             settledAt: newBal === 0 ? new Date() : null,
           },

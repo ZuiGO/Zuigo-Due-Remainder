@@ -184,7 +184,9 @@ export default function NotificationBell() {
 
   const missingContactsCount = alerts?.missingContacts?.length || 0;
   const overdueCount = alerts?.overdue?.count || 0;
-  const totalAlertsCount = missingContactsCount + (overdueCount > 0 ? 1 : 0);
+  // Badge must equal the "Missing Contact Details (N)" header inside the panel —
+  // overdue/diff summaries are context rows, not counted alerts.
+  const totalAlertsCount = missingContactsCount;
 
   return (
     <div className="relative inline-block text-left" ref={popoverRef}>

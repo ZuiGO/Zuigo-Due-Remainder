@@ -106,9 +106,22 @@ export default function LogsPage() {
                       </td>
 
                       <td className="py-3 px-6">
-                        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> {log.status}
-                        </span>
+                        {log.status === 'SIMULATED' ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded"
+                            title="Sandbox simulator handled this message — no live gateway is configured, so nothing was actually delivered."
+                          >
+                            <AlertCircle className="w-3.5 h-3.5" /> SIMULATED (sandbox)
+                          </span>
+                        ) : log.status === 'FAILED' ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-600">
+                            <AlertCircle className="w-3.5 h-3.5" /> FAILED
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> {log.status}
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3 px-6 text-xs text-slate-600 max-w-xs truncate font-mono">

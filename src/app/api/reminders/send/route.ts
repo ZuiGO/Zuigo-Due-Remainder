@@ -7,11 +7,12 @@ import {
 } from '@/lib/template-renderer';
 import { generateSmartReminderWithGroq } from '@/lib/groq';
 import { isNonTradeOrExcludedAccount, computeAging } from '@/lib/parser';
-import { 
-  dispatchMessage, 
-  OVERRIDE_TARGET_PHONE, 
-  OVERRIDE_TARGET_EMAIL 
+import {
+  dispatchMessage,
+  OVERRIDE_TARGET_PHONE,
+  OVERRIDE_TARGET_EMAIL
 } from '@/lib/dispatchers';
+import { resolveTenantBankDetails } from '@/lib/bank-details';
 
 export async function POST(req: NextRequest) {
   try {
@@ -45,6 +46,15 @@ export async function POST(req: NextRequest) {
     if (invoices.length === 0) {
       return NextResponse.json({ error: 'No matching invoices found' }, { status: 404 });
     }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: invoices[0].customer.tenantId },
+    });
+    const companyName = tenant?.companyName || 'Abhiyadna Machine Tools';
+    const resolvedBank = resolveTenantBankDetails(tenant);
+    const bankDetailsText = resolvedBank.configured
+      ? resolvedBank.text
+      : 'Please contact our accounts office for payment details.';
 
     const results = [];
 
@@ -129,8 +139,8 @@ export async function POST(req: NextRequest) {
       const populated = populateInvoiceTemplate(
         activeTemplate || { templateBody: `Payment Reminder: Bill ${invoice.billNo}` },
         invoice,
-        'Abhiyadna Machine Tools',
-        'HDFC Bank, A/C: 50200012345678, IFSC: HDFC0001234'
+        companyName,
+        bankDetailsText
       );
 
       let messageContent = '';
@@ -170,6 +180,7 @@ export async function POST(req: NextRequest) {
 
       // Record log in PostgreSQL
       const todayStr = new Date().toISOString().split('T')[0];
+      const logStatus = dispatchResult.simulated && dispatchResult.status === 'SENT' ? 'SIMULATED' : dispatchResult.status;
 
       await prisma.reminderLog.upsert({
         where: {
@@ -184,7 +195,7 @@ export async function POST(req: NextRequest) {
           recipient: dispatchResult.effectiveRecipient,
           subject,
           messageContent,
-          status: dispatchResult.status,
+          status: logStatus,
           providerResponseId: dispatchResult.providerResponseId || null,
           errorMessage: dispatchResult.errorMessage || null,
           triggerType: 'MANUAL',
@@ -198,7 +209,7 @@ export async function POST(req: NextRequest) {
           triggerType: 'MANUAL',
           recipient: dispatchResult.effectiveRecipient,
           subject,
-          status: dispatchResult.status,
+          status: logStatus,
           messageContent,
           providerResponseId: dispatchResult.providerResponseId || null,
           errorMessage: dispatchResult.errorMessage || null,
